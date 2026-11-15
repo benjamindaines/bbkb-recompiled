@@ -1,0 +1,314 @@
+package dev.bbkb.ime.core.locale;
+
+import static dev.bbkb.ime.core.shared.StringHelper.*;
+
+import android.content.Context;
+import android.content.res.Resources;
+import android.text.TextUtils;
+import android.view.View;
+import android.view.inputmethod.InputMethodSubtype;
+
+import dev.bbkb.ime.BuildConfig;
+import dev.bbkb.ime.R;
+import dev.bbkb.ime.core.device.profile.DeviceProfile;
+import com.blackberry.nuanceshim.NuanceSDK;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import dev.bbkb.ime.core.shared.RunInLocale;
+import dev.bbkb.ime.core.shared.Logger;
+import dev.bbkb.ime.core.shared.DebugLogUtils;
+
+
+
+public final class ResourceLocaleUtils {
+
+    private static final String TAG = "ResourceLocaleUtils";
+
+    private static volatile boolean sInitialized = false;
+
+    /** Not a cached {@code Resources}: that would keep resolving against the config at first init. */
+    private static volatile Context sAppContext;
+
+    private static String[] sPredefinedLayouts;
+
+    private static final Object LOCK = new Object();
+
+    private static final HashMap<String, String> sLayoutToDisplayName = new HashMap<>();
+
+    private static final HashMap<String, Integer> sLayoutToNameId = new HashMap<>();
+
+    private static final HashMap<String, Integer> sExceptionalLocaleToNameId = new HashMap<>();
+
+    private static final HashMap<String, Integer> sExceptionalLocaleToWithLayoutNameId = new HashMap<>();
+
+    private static final HashMap<String, String> sLocaleAndExtraToLayoutSet = new HashMap<>();
+
+    private static final String[] sSortedNonLatinLanguages = {"ja", NuanceSDK.CHINESE_LOCALE};
+
+    static {
+        Arrays.sort(sSortedNonLatinLanguages);
+    }
+
+    private ResourceLocaleUtils() {
+    }
+
+    public static void init(Context context) {
+        synchronized (LOCK) {
+            if (!sInitialized) {
+                initLocked(context);
+                sInitialized = true;
+            }
+        }
+    }
+
+    /** Re-reads the resource-backed tables after a configuration change. */
+    public static void reinit(Context context) {
+        synchronized (LOCK) {
+            initLocked(context);
+            sInitialized = true;
+        }
+    }
+
+    /** @return the live application {@code Resources}, or {@code null} before {@link #init}. */
+    private static Resources resources() {
+        final Context context = sAppContext;
+        return context != null ? context.getResources() : null;
+    }
+
+    /** @return the UI locale, or the default locale before {@link #init} */
+    private static Locale displayLocale() {
+        final Resources resources = resources();
+        return resources != null ? LocaleUtils.getConfigurationLocale(resources) : Locale.getDefault();
+    }
+
+    private static void initLocked(Context context) throws Resources.NotFoundException {
+        sAppContext = context.getApplicationContext();
+        Resources resources = context.getResources();
+        // getIdentifier()'s defPackage is the installed package (differs per build type), not a literal.
+        final String resPackage = context.getPackageName();
+        String[] stringArray = resources.getStringArray(R.array.predefined_layouts);
+        sPredefinedLayouts = stringArray;
+        String[] stringArray2 = resources.getStringArray(R.array.predefined_layout_display_names);
+        int i = 0;
+        for (int i2 = 0; i2 < stringArray.length; i2++) {
+            String str = stringArray[i2];
+            sLayoutToDisplayName.put(str, stringArray2[i2]);
+            sLayoutToNameId.put(str, Integer.valueOf(resources.getIdentifier("string/subtype_generic_" + str, null, resPackage)));
+            sLayoutToNameId.put(getNoLanguageLayoutKey(str), Integer.valueOf(resources.getIdentifier("string/subtype_no_language_" + str, null, resPackage)));
+        }
+        sLayoutToNameId.put("translit", Integer.valueOf(R.string.subtype_generic_translit));
+        for (String str2 : resources.getStringArray(R.array.subtype_locale_exception_keys)) {
+            sExceptionalLocaleToNameId.put(str2, Integer.valueOf(resources.getIdentifier("string/subtype_" + str2, null, resPackage)));
+            sExceptionalLocaleToWithLayoutNameId.put(str2, Integer.valueOf(resources.getIdentifier("string/subtype_with_layout_" + str2, null, resPackage)));
+        }
+        String[] stringArray3 = resources.getStringArray(R.array.locale_and_extra_value_to_keyboard_layout_set_map);
+        while (true) {
+            int i3 = i + 1;
+            if (i3 >= stringArray3.length) {
+                return;
+            }
+            sLocaleAndExtraToLayoutSet.put(stringArray3[i], stringArray3[i3]);
+            i += 2;
+        }
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    public static boolean isExceptionalLocale(String localeString) {
+        return sExceptionalLocaleToNameId.containsKey(localeString);
+    }
+
+    /** @param keyboardLayoutName keyboard layout set name */
+    private static final String getNoLanguageLayoutKey(String keyboardLayoutName) {
+        return "zz_" + keyboardLayoutName;
+    }
+
+    /**
+     * @param localeString subtype locale string
+     * @param keyboardLayoutName keyboard layout set name
+     */
+    public static int getSubtypeNameResId(String localeString, String keyboardLayoutName) {
+        if (isExceptionalLocale(localeString)) {
+            return sExceptionalLocaleToWithLayoutNameId.get(localeString).intValue();
+        }
+        if ("zz".equals(localeString)) {
+            keyboardLayoutName = getNoLanguageLayoutKey(keyboardLayoutName);
+        }
+        Integer num = sLayoutToNameId.get(keyboardLayoutName);
+        return num == null ? R.string.subtype_generic : num.intValue();
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    private static Locale getDisplayLocale(String localeString) {
+        if ("zz".equals(localeString)) {
+            return displayLocale();
+        }
+        return LocaleUtils.constructLocaleFromString(localeString);
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    public static String getSubtypeLocaleDisplayName(String localeString) {
+        return getSubtypeLocaleDisplayNameInternal(localeString, displayLocale());
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    public static String getSubtypeLocaleDisplayNameInLocale(String localeString) {
+        return getSubtypeLocaleDisplayNameInternal(localeString, getDisplayLocale(localeString));
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    public static String getSubtypeLanguageDisplayName(String localeString) {
+        Locale localeM5507a = LocaleUtils.constructLocaleFromString(localeString);
+        return getSubtypeLocaleDisplayNameInternal(localeM5507a.getLanguage(), getDisplayLocale(localeString));
+    }
+
+    /** @param localeString subtype locale string, e.g. {@code en_US} */
+    private static String getSubtypeLocaleDisplayNameInternal(String localeString, Locale locale) {
+        String displayName;
+        if ("zz".equals(localeString)) {
+            final Resources resources = resources();
+            return resources != null ? resources.getString(R.string.subtype_no_language) : "";
+        }
+        final Integer num = sExceptionalLocaleToNameId.get(localeString);
+        if (num != null && num.intValue() != 0) {
+            displayName = new RunInLocale<String>() {
+                @Override
+                public String job(Resources resources) {
+                    return resources.getString(num.intValue());
+                }
+            }.runInLocale(sAppContext, locale);
+        } else {
+            displayName = LocaleUtils.constructLocaleFromString(localeString).getDisplayName(locale);
+        }
+        return capitalizeFirstCodePoint(displayName, locale);
+    }
+
+    private static String getReplacementString(InputMethodSubtype inputMethodSubtype, Locale locale) {
+        if (inputMethodSubtype.containsExtraValueKey("UntranslatableReplacementStringInSubtypeName")) {
+            return inputMethodSubtype.getExtraValueOf("UntranslatableReplacementStringInSubtypeName");
+        }
+        return getSubtypeLocaleDisplayNameInternal(inputMethodSubtype.getLocale(), locale);
+    }
+
+    public static String getSubtypeDisplayName(InputMethodSubtype inputMethodSubtype) {
+        return getSubtypeDisplayNameInternal(inputMethodSubtype, displayLocale());
+    }
+
+    private static String getSubtypeDisplayNameInternal(final InputMethodSubtype inputMethodSubtype, Locale locale) {
+        final String strM5614a = getReplacementString(inputMethodSubtype, locale);
+        final int nameResId = inputMethodSubtype.getNameResId();
+        return capitalizeFirstCodePoint(new RunInLocale<String>() {
+            @Override
+            public String job(Resources resources) {
+                try {
+                    return resources.getString(nameResId, strM5614a);
+                } catch (Resources.NotFoundException unused) {
+                    if (BuildConfig.DEBUG) {
+                        Logger.warn(ResourceLocaleUtils.TAG, "Unknown subtype: mode=" + inputMethodSubtype.getMode() + " nameResId=" + inputMethodSubtype.getNameResId() + " locale=" + inputMethodSubtype.getLocale() + " extra=" + inputMethodSubtype.getExtraValue() + "\n" + DebugLogUtils.getStackTrace());
+                    }
+                    return "";
+                }
+            }
+        }.runInLocale(sAppContext, locale), locale);
+    }
+
+    public static boolean isNoLanguage(InputMethodSubtype inputMethodSubtype) {
+        return "zz".equals(inputMethodSubtype.getLocale());
+    }
+
+    public static boolean isNoLanguage(Locale locale) {
+        if (locale == null) {
+            return false;
+        }
+        return "zz".equals(locale.getLanguage());
+    }
+
+    public static Locale getSubtypeLocale(InputMethodSubtype inputMethodSubtype) {
+        if (inputMethodSubtype == null) {
+            return displayLocale();
+        }
+        String localeStr = inputMethodSubtype.getLocale();
+        if (localeStr == null) {
+            return displayLocale();
+        }
+        return LocaleUtils.constructLocaleFromString(localeStr);
+    }
+
+    public static String getKeyboardLayoutSetDisplayName(InputMethodSubtype inputMethodSubtype) {
+        return getKeyboardLayoutSetDisplayName(getKeyboardLayoutSetName(inputMethodSubtype));
+    }
+
+    /** @param keyboardLayoutName keyboard layout set name */
+    public static String getKeyboardLayoutSetDisplayName(String keyboardLayoutName) {
+        return sLayoutToDisplayName.get(keyboardLayoutName);
+    }
+
+    public static String getKeyboardLayoutSetName(InputMethodSubtype inputMethodSubtype) {
+        String extraValueOf = inputMethodSubtype.getExtraValueOf("KeyboardLayoutSet");
+        if (extraValueOf == null) {
+            extraValueOf = sLocaleAndExtraToLayoutSet.get(inputMethodSubtype.getLocale() + ":" + inputMethodSubtype.getExtraValue());
+        }
+        if (extraValueOf != null) {
+            return extraValueOf;
+        }
+        Logger.debug(TAG, "KeyboardLayoutSet not found, use keypadVariant: locale=" + inputMethodSubtype.getLocale() + " extraValue=" + inputMethodSubtype.getExtraValue());
+        return DeviceProfile.current().getKeypadLayout();
+    }
+
+    /** Whether the locale's script runs right to left; false for a null locale. */
+    public static boolean isRtlLanguage(Locale locale) {
+        return TextUtils.getLayoutDirectionFromLocale(locale) == View.LAYOUT_DIRECTION_RTL;
+    }
+
+    public static boolean isRtlLanguage(InputMethodSubtype inputMethodSubtype) {
+        return isRtlLanguage(getSubtypeLocale(inputMethodSubtype));
+    }
+
+    public static String getConverterDescriptor(InputMethodSubtype inputMethodSubtype) {
+        return inputMethodSubtype.getExtraValueOf("ConverterDescriptor");
+    }
+
+    /**
+     * Extra languages in the extra value's own order ("de/es": de, then es), each once; null for
+     * none. Never re-sorted: the string is part of the subtype's identity.
+     */
+    public static Set<Locale> getAdditionalLocales(InputMethodSubtype inputMethodSubtype) {
+        String extraValueOf;
+        if (inputMethodSubtype == null || (extraValueOf = inputMethodSubtype.getExtraValueOf("AdditionalLocales")) == null) {
+            return null;
+        }
+        Set<Locale> locales = new LinkedHashSet<>();
+        for (String str : extraValueOf.split("/")) {
+            locales.add(LocaleUtils.constructLocaleFromString(str));
+        }
+        return locales;
+    }
+
+    /** {@code primary} first, then {@code additional} (possibly null) in its order, each once. */
+    public static List<Locale> getKeyboardLocales(Locale primary, Set<Locale> additional) {
+        Set<Locale> locales = new LinkedHashSet<>();
+        if (primary != null) {
+            locales.add(primary);
+        }
+        if (additional != null) {
+            for (Locale locale : additional) {
+                if (locale != null) {
+                    locales.add(locale);
+                }
+            }
+        }
+        return new ArrayList<>(locales);
+    }
+
+    public static boolean isNonCjkLanguage(InputMethodSubtype inputMethodSubtype) {
+        if (inputMethodSubtype == null) {
+            return false;
+        }
+        return Arrays.binarySearch(sSortedNonLatinLanguages, getSubtypeLocale(inputMethodSubtype).getLanguage()) < 0;
+    }
+}

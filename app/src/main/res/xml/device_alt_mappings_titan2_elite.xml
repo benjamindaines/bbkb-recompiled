@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Titan 2 Elite Alt layer (differs from the Titan 2) from a published study; check against real keycaps -->
+<alt-key-mappings>
+    <mapping keycode="Q" char="0"/>
+    <mapping keycode="W" char="1"/>
+    <mapping keycode="E" char="2"/>
+    <mapping keycode="R" char="3"/>
+    <mapping keycode="T" char="("/>
+    <mapping keycode="Y" char=")"/>
+    <mapping keycode="U" char="_"/>
+    <mapping keycode="I" char="-"/>
+    <mapping keycode="O" char="+"/>
+    <mapping keycode="P" char="@"/>
+
+    <mapping keycode="A" char="*"/>
+    <mapping keycode="S" char="4"/>
+    <mapping keycode="D" char="5"/>
+    <mapping keycode="F" char="6"/>
+    <mapping keycode="G" char="/"/>
+    <mapping keycode="H" char=":"/>
+    <mapping keycode="J" char="#"/>
+    <mapping keycode="K" char="'"/>
+    <mapping keycode="L" char="&quot;"/>
+
+    <mapping keycode="Z" char="7"/>
+    <mapping keycode="X" char="8"/>
+    <mapping keycode="C" char="9"/>
+    <mapping keycode="V" char="?"/>
+    <mapping keycode="B" char="!"/>
+    <mapping keycode="N" char=","/>
+    <mapping keycode="M" char="."/>
+
+    <!-- Alt+Space: the ROM emits a private-use code point; a plain space instead -->
+    <mapping keycode="SPACE" char=" "/>
+
+</alt-key-mappings>

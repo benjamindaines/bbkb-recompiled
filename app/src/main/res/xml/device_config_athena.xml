@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- BlackBerry KEY2 (athena), auto-selected on detection -->
+
+<device-input-config version="2.1" name="BlackBerry KEY2">
+
+    <device>
+        <match>
+            <!-- KEY2 reports "athena" (LineageOS) or "bbf100" (stock and some LineageOS); regex is case-sensitive, hence (?i) -->
+            <build-device regex="(?i)athena|bbf100"/>
+        </match>
+
+        <device-type>CKB</device-type>
+        <!-- Editions offered by the Keypad layout setting above automatic detection -->
+        <keypad-layouts>qwerty, qwertz, azerty</keypad-layouts>
+
+        <!-- No <keypad-layout>: it outranks all detection and this config matches QWERTY, AZERTY and QWERTZ units (ShippedDeviceConfigsTest) -->
+
+        <!-- Linear Y warp (x0.72) onto the even 324-tall KDB pulls low touches to key centres; band-exact piecewise mis-decodes -->
+        <ckb-y-warp>0:0,450:324</ckb-y-warp>
+
+        <!-- Keypad KDBs are built from assets/kdb/keypad_pkb_athena.xml (even rows, own file so it can diverge) -->
+        <kdb-variant>athena</kdb-variant>
+
+        <input-mappings>
+            <scancode-mappings>
+
+                <!-- Mic key (keyCode 7): voice input; with Alt or in a numeric field it types 0 -->
+                <key rawKeyCode="7" role="BOARD_VOICE"
+                     treatAs="KEYCODE_MIC" altChar="0" board="-27"
+                     notes="Key2 mic key (keyCode=7), alt char is zero digit"/>
+
+                <!-- Speed Key (KEYCODE_FUNCTION, scanCode 110): user-mappable via the Multifunction key setting -->
+                <key rawKeyCode="119" rawScanCode="110" role="MULTIFUNCTION"
+                     default-action="emoji_board"
+                     notes="Key2 multifunction/convenience key (keyCode=119, scanCode=110)"/>
+
+            </scancode-mappings>
+        </input-mappings>
+
+        <settings-overrides>
+            <setting key="type_by_swiping_ckb" type="boolean" read-only="false"/>
+        </settings-overrides>
+
+
+        <!-- Firmware delivers every key, so the helper is disabled (also hides it from Accessibility settings) -->
+        <accessibility-helper>off</accessibility-helper>
+    </device>
+
+</device-input-config>

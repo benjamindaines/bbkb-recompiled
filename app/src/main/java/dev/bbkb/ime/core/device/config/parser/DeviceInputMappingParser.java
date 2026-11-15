@@ -1,0 +1,650 @@
+package dev.bbkb.ime.core.device.config.parser;
+
+import android.content.Context;
+import android.content.res.XmlResourceParser;
+import android.util.Xml;
+
+import dev.bbkb.ime.core.device.config.model.CkbKeyGridConfig;
+import dev.bbkb.ime.core.device.config.model.DeviceInputConfig;
+import dev.bbkb.ime.core.device.config.model.DeviceInputMapping;
+import dev.bbkb.ime.core.device.config.model.DeviceMatchCriteria;
+import dev.bbkb.ime.core.device.config.model.DeviceQuirk;
+import dev.bbkb.ime.core.device.config.model.DeviceSettingOverride;
+import dev.bbkb.ime.core.device.config.model.KeyRole;
+import dev.bbkb.ime.core.device.config.model.ScancodeMapping;
+import dev.bbkb.ime.core.device.config.model.TouchKeypadConfig;
+import dev.bbkb.ime.core.device.detection.KeypadLayoutDetector;
+import dev.bbkb.ime.core.shared.Logger;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Locale;
+import java.util.Map;
+
+/**
+ * Parser for device input mapping XML. Every element loop goes through {@link #children}; a
+ * truncated document throws out to the document-level catch, keeping devices already parsed.
+ */
+public class DeviceInputMappingParser {
+
+    private static final String TAG = "DeviceInputMappingParser";
+
+    /** Handler for one START_TAG; {@code name} is the element name. */
+    private interface Tag {
+        void on(XmlPullParser parser, String name) throws XmlPullParserException, IOException;
+    }
+
+    /**
+     * Runs {@code body} for every START_TAG inside the open element named {@code end}, leaving the
+     * parser on that END_TAG. The END_DOCUMENT check is load-bearing: KXmlParser keeps returning
+     * END_DOCUMENT instead of throwing, so a truncated user-imported config would spin forever at
+     * IME startup. Callers catch the throw and keep what was parsed.
+     */
+    private static void children(XmlPullParser parser, String end, Tag body)
+            throws XmlPullParserException, IOException {
+        int eventType = parser.next();
+        while (eventType != XmlPullParser.END_TAG || !end.equals(parser.getName())) {
+            if (eventType == XmlPullParser.END_DOCUMENT) {
+                throw new XmlPullParserException(
+                        "Document ended inside <" + end + ">: truncated or malformed config");
+            }
+            if (eventType == XmlPullParser.START_TAG) {
+                body.on(parser, parser.getName());
+            }
+            eventType = parser.next();
+        }
+    }
+
+    private static String attr(XmlPullParser parser, String name) {
+        return parser.getAttributeValue(null, name);
+    }
+
+    /** Element text, trimmed; null when absent or blank. */
+    private static String trimmedText(XmlPullParser parser)
+            throws XmlPullParserException, IOException {
+        final String text = parser.nextText();
+        return (text == null || text.trim().isEmpty()) ? null : text.trim();
+    }
+
+    private static int intAttr(XmlPullParser parser, String name, int def) {
+        final String v = attr(parser, name);
+        if (v == null) return def;
+        try { return Integer.parseInt(v.trim()); } catch (NumberFormatException e) { return def; }
+    }
+
+    private static float floatAttr(XmlPullParser parser, String name, float def) {
+        final String v = attr(parser, name);
+        if (v == null) return def;
+        try { return Float.parseFloat(v.trim()); } catch (NumberFormatException e) { return def; }
+    }
+
+    public static DeviceInputConfig parseConfig(Context context) {
+        return fromResource(context, dev.bbkb.ime.R.xml.device_input_config,
+                "device KCM mappings");
+    }
+
+    /** Parses a preloaded config from res/xml/. */
+    public static DeviceInputConfig parseConfigFromXmlResource(Context context, int resId) {
+        return fromResource(context, resId, "device config from XML resource");
+    }
+
+    private static DeviceInputConfig fromResource(Context context, int resId, String what) {
+        final DeviceInputConfig config = new DeviceInputConfig();
+        XmlResourceParser parser = null;
+        try {
+            parser = context.getResources().getXml(resId);
+            parseDevices(parser, config, null);
+        } catch (Exception e) {
+            Logger.error(TAG, "Error parsing " + what + ": " + e.getMessage());
+        } finally {
+            if (parser != null) {
+                parser.close();
+            }
+        }
+        return config;
+    }
+
+    /** Parses a custom config file. */
+    public static DeviceInputConfig parseConfigFromStream(InputStream is) {
+        return parseConfigFromStream(is, null);
+    }
+
+    /** Resolves {@code <device extends="...">}: a fresh parsed copy of that built-in profile, or null. */
+    public interface BaseProfiles {
+        DeviceInputMapping load(String name);
+    }
+
+    /** As above, resolving {@code extends} through {@code bases}; unresolved names read as standalone profiles. */
+    public static DeviceInputConfig parseConfigFromStream(InputStream is, BaseProfiles bases) {
+        final DeviceInputConfig config = new DeviceInputConfig();
+        try {
+            final XmlPullParser parser = Xml.newPullParser();
+            parser.setInput(is, "UTF-8");
+            parseDevices(parser, config, bases);
+        } catch (Exception e) {
+            Logger.error(TAG, "Error parsing device config from stream: " + e.getMessage());
+        }
+        return config;
+    }
+
+    /** Collects every {@code <device>} in the document. Devices parsed before a malformed tail are kept. */
+    private static void parseDevices(XmlPullParser parser, DeviceInputConfig config,
+                                     BaseProfiles bases)
+            throws XmlPullParserException, IOException {
+        int eventType = parser.getEventType();
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            if (eventType == XmlPullParser.START_TAG && "device".equals(parser.getName())) {
+                final DeviceInputMapping mapping = parseDeviceV2(parser, bases);
+                if (mapping != null) {
+                    config.mappings.add(mapping);
+                }
+            }
+            eventType = parser.next();
+        }
+    }
+
+    /** The display name: the root element's "name" attribute or a {@code <name>} tag; null if none. */
+    public static String parseDisplayName(InputStream is) {
+        try {
+            final XmlPullParser parser = Xml.newPullParser();
+            parser.setInput(is, "UTF-8");
+
+            int eventType = parser.getEventType();
+            while (eventType != XmlPullParser.END_DOCUMENT) {
+                if (eventType == XmlPullParser.START_TAG) {
+                    final String tagName = parser.getName();
+                    if ("device-input-config".equals(tagName) || "device-mappings".equals(tagName)) {
+                        final String nameAttr = attr(parser, "name");
+                        if (nameAttr != null && !nameAttr.isEmpty()) {
+                            return nameAttr;
+                        }
+                    }
+                    if ("name".equals(tagName)) {
+                        return parser.nextText();
+                    }
+                }
+                eventType = parser.next();
+            }
+        } catch (Exception e) {
+            Logger.error(TAG, "Error parsing display name from stream: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Parses one {@code <device>}. {@code <device extends="device_config_athena">} starts from that
+     * built-in profile, and what the device writes then replaces or adds to it:
+     * <ul>
+     *   <li>a single-valued element ({@code <device-type>}, {@code <kdb-variant>},
+     *       {@code <keypad-layout>}, {@code <keypad-layouts>}, {@code <touch-keypad>},
+     *       {@code <accessibility-helper>}, an Alt table {@code <source>} ...) replaces it;</li>
+     *   <li>{@code <match>} replaces the inherited rules as a whole; with none, the inherited
+     *       rules stand;</li>
+     *   <li>{@code <key>} roles and {@code <setting>} overrides are consulted before the inherited
+     *       ones, so a key or setting named again wins and the rest are kept;</li>
+     *   <li>layout overrides, quirks and Alt {@code <mapping>} entries are added, an entry for the
+     *       same thing replacing the inherited one.</li>
+     * </ul>
+     */
+    private static DeviceInputMapping parseDeviceV2(XmlPullParser parser, BaseProfiles bases)
+            throws XmlPullParserException, IOException {
+
+        final String baseName = attr(parser, "extends");
+        DeviceInputMapping inherited = null;
+        if (baseName != null && !baseName.trim().isEmpty()) {
+            inherited = bases != null ? bases.load(baseName.trim()) : null;
+            if (inherited == null) {
+                Logger.error(TAG, "<device extends=\"" + baseName + "\">: no such built-in profile;"
+                        + " reading the device as a profile of its own");
+            }
+        }
+        final DeviceInputMapping mapping = inherited != null ? inherited : new DeviceInputMapping();
+        if (inherited == null) {
+            mapping.mappingType = DeviceInputMapping.InputMappingType.DEFAULT;
+        }
+        // Where the inherited entries end: what this device adds is moved in front of them below.
+        final int inheritedRoles = mapping.scancodeMappings.size();
+        final int inheritedSettings = mapping.settingsOverrides.size();
+
+        children(parser, "device", (p, tag) -> {
+            switch (tag) {
+                case "match":
+                    parseMatchCriteria(p, mapping);
+                    break;
+                case "device-type": {
+                    final String deviceType = p.nextText();
+                    if ("PKB".equalsIgnoreCase(deviceType)) {
+                        mapping.forcePkbDevice = true;
+                        mapping.forceTouchKeypad = false;  // said again over an inherited CKB
+                    } else if ("CKB".equalsIgnoreCase(deviceType)) {
+                        mapping.forcePkbDevice = true;
+                        mapping.forceTouchKeypad = true;
+                    }
+                    break;
+                }
+                case "input-mappings":
+                    parseInputMappings(p, mapping);
+                    break;
+                case "settings-overrides":
+                    children(p, tag, (q, child) -> {
+                        if (!"setting".equals(child)) return;
+                        final DeviceSettingOverride override = parseSettingOverride(q);
+                        if (override != null) {
+                            mapping.settingsOverrides.add(override);
+                        }
+                    });
+                    break;
+                case "ckb-key-grid":
+                    mapping.ckbKeyGridConfig = parseCkbKeyGrid(p);
+                    break;
+                case "kdb-variant": {
+                    final String variant = trimmedText(p);
+                    if (variant != null) mapping.kdbVariant = variant;
+                    break;
+                }
+                case "ckb-y-warp": {
+                    final String warp = trimmedText(p);
+                    if (warp != null) mapping.ckbYWarp = warp;
+                    break;
+                }
+                case "touch-keypad":
+                    mapping.touchKeypad = parseTouchKeypad(p);
+                    break;
+                case "quirk": {
+                    final String name = attr(p, "name");
+                    final DeviceQuirk quirk = DeviceQuirk.of(name);
+                    if (quirk != null) {
+                        mapping.quirks.add(quirk);
+                    } else {
+                        Logger.error(TAG, "Ignoring unknown <quirk name=\"" + name + "\"/>");
+                    }
+                    break;
+                }
+                case "accessibility-helper": {
+                    // "off" removes the BBKB helper from this phone's Accessibility list (see
+                    // KeyInterceptorComponent); "available", or no element, offers it.
+                    final String value = trimmedText(p);
+                    if ("off".equalsIgnoreCase(value)) {
+                        mapping.accessibilityHelperOff = true;
+                    } else if ("available".equalsIgnoreCase(value)) {
+                        mapping.accessibilityHelperOff = false;
+                    } else {
+                        Logger.error(TAG, "Ignoring <accessibility-helper>" + value
+                                + "</accessibility-helper>: expected off or available");
+                    }
+                    break;
+                }
+                case "keypad-layouts": {
+                    // The shapes the model was sold in, for the Physical keyboard screen's
+                    // Keypad layout choice; unknown names are dropped with a log line.
+                    final String declared = trimmedText(p);
+                    if (declared != null) {
+                        mapping.keypadLayoutOptions.clear();  // the list as a whole, not added to
+                        for (String part : declared.split(",")) {
+                            final String layout = KeypadLayoutDetector.normalize(part.trim());
+                            if (layout != null) {
+                                if (!mapping.keypadLayoutOptions.contains(layout)) mapping.keypadLayoutOptions.add(layout);
+                            } else if (!part.trim().isEmpty()) {
+                                Logger.error(TAG, "Ignoring keypad-layouts entry \"" + part.trim()
+                                        + "\": expected qwerty, qwertz or azerty");
+                            }
+                        }
+                    }
+                    break;
+                }
+                case "keypad-layout": {
+                    // The detected physical keypad layout override, validated so a typo is rejected
+                    // here rather than becoming a layout no `<case physicalKeypadVariant=...>` matches.
+                    final String declared = trimmedText(p);
+                    final String layout = KeypadLayoutDetector.normalize(declared);
+                    if (layout != null) {
+                        mapping.keypadLayout = layout;
+                    } else if (declared != null) {
+                        Logger.error(TAG, "Ignoring <keypad-layout>" + declared + "</keypad-layout>"
+                                + ": expected qwerty, qwertz or azerty");
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        });
+
+        moveTailToFront(mapping.scancodeMappings, inheritedRoles);
+        moveTailToFront(mapping.settingsOverrides, inheritedSettings);
+
+        final boolean named = mapping.deviceName != null && !mapping.deviceName.isEmpty();
+        final boolean matched = mapping.matchCriteria != null && mapping.matchCriteria.hasAnyCriteria();
+        return (named || matched) ? mapping : null;
+    }
+
+    /**
+     * Moves the entries from {@code from} onwards to the front, keeping their order: the entries
+     * a device wrote itself, ahead of the ones it inherited. Both lists are read first match wins.
+     */
+    private static <T> void moveTailToFront(java.util.List<T> list, int from) {
+        if (from <= 0 || from >= list.size()) return;
+        final java.util.List<T> own = new java.util.ArrayList<>(list.subList(from, list.size()));
+        list.subList(from, list.size()).clear();
+        list.addAll(0, own);
+    }
+
+    /**
+     * Parses {@code <match>}: {@code exact} wins over {@code regex}; {@code device-name} also
+     * records a display string for logging.
+     */
+    private static void parseMatchCriteria(XmlPullParser parser, DeviceInputMapping mapping)
+            throws XmlPullParserException, IOException {
+
+        final DeviceMatchCriteria criteria = new DeviceMatchCriteria();
+        children(parser, "match", (p, tag) -> {
+            final DeviceMatchCriteria.Field field = DeviceMatchCriteria.Field.of(tag);
+            if (field == null) return;
+            final DeviceMatchCriteria.Rule rule = rule(p);
+            if (rule == null) return;
+            criteria.set(field, rule);
+            if (field == DeviceMatchCriteria.Field.DEVICE_NAME) {
+                final String exact = attr(p, "exact");
+                mapping.deviceName = exact != null ? exact : "regex:" + attr(p, "regex");  // For logging
+            }
+        });
+
+        if (criteria.hasAnyCriteria()) {
+            mapping.matchCriteria = criteria;
+        }
+    }
+
+    /** The element's {@code exact} (preferred) or {@code regex} rule; null when it has neither. */
+    private static DeviceMatchCriteria.Rule rule(XmlPullParser parser) {
+        final String exact = attr(parser, "exact");
+        final String regex = attr(parser, "regex");
+        if (exact != null) return DeviceMatchCriteria.exact(exact);
+        if (regex != null) return DeviceMatchCriteria.regex(regex);
+        return null;
+    }
+
+    /**
+     * Parse a {@code <touch-keypad>} block (see {@link TouchKeypadConfig} for the schema). An
+     * unrecognised {@code contacts} or {@code source} value is logged and left at its default
+     * rather than dropping the block: the pad's name and ranges are still worth having.
+     */
+    private static TouchKeypadConfig parseTouchKeypad(XmlPullParser parser)
+            throws XmlPullParserException, IOException {
+        final TouchKeypadConfig pad = new TouchKeypadConfig();
+        pad.rangeX = Math.max(0, intAttr(parser, "range-x", 0));
+        pad.rangeY = Math.max(0, intAttr(parser, "range-y", 0));
+        pad.nativeMinSdk = intAttr(parser, "native-min-sdk", TouchKeypadConfig.NATIVE_MIN_SDK_UNSET);
+
+        final String contacts = attr(parser, "contacts");
+        if (contacts != null) {
+            final TouchKeypadConfig.Contacts parsed = TouchKeypadConfig.Contacts.fromString(contacts);
+            if (parsed != null) {
+                pad.contacts = parsed;
+            } else {
+                Logger.error(TAG, "Ignoring <touch-keypad contacts=\"" + contacts
+                        + "\">: expected single or multi");
+            }
+        }
+        final String source = attr(parser, "source");
+        if (source != null) {
+            final TouchKeypadConfig.SourcePreference parsed =
+                    TouchKeypadConfig.SourcePreference.fromString(source);
+            if (parsed != null) {
+                pad.source = parsed;
+            } else {
+                Logger.error(TAG, "Ignoring <touch-keypad source=\"" + source
+                        + "\">: expected auto, native or shizuku");
+            }
+        }
+
+        children(parser, "touch-keypad", (p, tag) -> {
+            if ("input-device".equals(tag)) {
+                final DeviceMatchCriteria.Rule name = rule(p);
+                if (name != null) pad.inputDeviceName = name;
+            }
+        });
+        return pad;
+    }
+
+    private static void parseInputMappings(XmlPullParser parser, DeviceInputMapping mapping)
+            throws XmlPullParserException, IOException {
+        children(parser, "input-mappings", (p, tag) -> {
+            switch (tag) {
+                case "alt-mappings":
+                    parseAltMappings(p, mapping);
+                    break;
+                case "keypad-type":
+                    mapping.keypadType = p.nextText();
+                    break;
+                case "layout-overrides":
+                    overrides(p, tag, "from", "to", mapping.layoutOverrides);
+                    break;
+                case "scancode-mappings":
+                    parseScancodeMappings(p, mapping);
+                    break;
+                case "layout-alt-overrides":
+                    overrides(p, tag, "layout", "alt-mappings", mapping.layoutAltOverrides);
+                    break;
+                default:
+                    break;
+            }
+        });
+    }
+
+    /** {@code <override a=".." b=".."/>} children into a map; an entry missing either half is dropped. */
+    private static void overrides(XmlPullParser parser, String end, String keyAttr,
+                                  String valueAttr, Map<String, String> out)
+            throws XmlPullParserException, IOException {
+        children(parser, end, (p, tag) -> {
+            if (!"override".equals(tag)) return;
+            final String key = attr(p, keyAttr);
+            final String value = attr(p, valueAttr);
+            if (key != null && value != null) {
+                out.put(key, value);
+            }
+        });
+    }
+
+    private static void parseAltMappings(XmlPullParser parser, DeviceInputMapping mapping)
+            throws XmlPullParserException, IOException {
+        mapping.mappingType = DeviceInputMapping.InputMappingType.CUSTOM_ALT_MAPPINGS;
+        children(parser, "alt-mappings", (p, tag) -> {
+            switch (tag) {
+                case "source":
+                    mapping.altMappingsFile = p.nextText();
+                    break;
+                case "enabled":
+                    if ("false".equals(p.nextText())) {
+                        mapping.mappingType = DeviceInputMapping.InputMappingType.DEFAULT;
+                    }
+                    break;
+                // The profile's own Alt characters, in the form the built-in tables use. They
+                // go on top of the <source> table, or stand alone when there is none.
+                case "mapping":
+                    AltMappingsParser.parseMapping(p, inlineAltTable(mapping));
+                    break;
+                case "special-function":
+                    AltMappingsParser.parseSpecialFunction(p, inlineAltTable(mapping));
+                    break;
+                default:
+                    break;
+            }
+        });
+    }
+
+    private static dev.bbkb.ime.core.device.config.model.AltMappingsTable inlineAltTable(
+            DeviceInputMapping mapping) {
+        if (mapping.inlineAltMappings == null) {
+            mapping.inlineAltMappings =
+                    new dev.bbkb.ime.core.device.config.model.AltMappingsTable("profile");
+        }
+        return mapping.inlineAltMappings;
+    }
+
+    /** Each {@code <key>} maps a raw scancode/keycode to a role and optional attributes. */
+    private static void parseScancodeMappings(XmlPullParser parser, DeviceInputMapping mapping)
+            throws XmlPullParserException, IOException {
+        children(parser, "scancode-mappings", (p, tag) -> {
+            if (!"key".equals(tag)) return;
+            final ScancodeMapping scMapping = parseSingleScancodeMapping(p);
+            if (scMapping != null) {
+                mapping.scancodeMappings.add(scMapping);
+            }
+        });
+
+        if (!mapping.scancodeMappings.isEmpty()) {
+            Logger.info(TAG, "Parsed " + mapping.scancodeMappings.size()
+                    + " scancode mappings for device: " + mapping.deviceName);
+        }
+    }
+
+    /**
+     * One {@code <key>} within {@code <scancode-mappings>}. Attributes:
+     *   rawScanCode: int, optional
+     *   rawKeyCode: int, optional
+     *   treatAs: string (KEYCODE_* name), optional
+     *   role: string (KeyRole name), required
+     *   altChar: single character, optional
+     *   board: int (board ID), optional
+     *   default-action: string (MULTIFUNCTION action id, e.g. "emoji_board"), optional
+     *   notes: string, optional
+     */
+    private static ScancodeMapping parseSingleScancodeMapping(XmlPullParser parser) {
+        final String roleStr = attr(parser, "role");
+        if (roleStr == null || roleStr.isEmpty()) {
+            Logger.error(TAG, "Scancode mapping missing required 'role' attribute");
+            return null;
+        }
+        final KeyRole role = KeyRole.fromString(roleStr);
+        if (role == null) {
+            Logger.error(TAG, "Scancode mapping has unrecognized role: " + roleStr);
+            return null;
+        }
+
+        final String rawScanStr = attr(parser, "rawScanCode");
+        final String rawKeyStr = attr(parser, "rawKeyCode");
+        if (rawScanStr == null && rawKeyStr == null) {
+            Logger.error(TAG, "Scancode mapping must specify at least rawScanCode or rawKeyCode");
+            return null;
+        }
+
+        final ScancodeMapping mapping = new ScancodeMapping();
+        mapping.role = role;
+        mapping.treatAs = attr(parser, "treatAs");
+        mapping.defaultAction = attr(parser, "default-action");
+        mapping.notes = attr(parser, "notes");
+
+        try {
+            if (rawScanStr != null) mapping.rawScanCode = Integer.parseInt(rawScanStr);
+            if (rawKeyStr != null) mapping.rawKeyCode = Integer.parseInt(rawKeyStr);
+        } catch (NumberFormatException e) {
+            Logger.error(TAG, "Invalid rawScanCode/rawKeyCode: " + rawScanStr + "/" + rawKeyStr);
+            return null;
+        }
+
+        final String altCharStr = attr(parser, "altChar");
+        if (altCharStr != null && !altCharStr.isEmpty()) {
+            mapping.altChar = altCharStr.charAt(0);
+        }
+
+        final String boardStr = attr(parser, "board");
+        if (boardStr != null) {
+            try {
+                mapping.boardId = Integer.parseInt(boardStr);
+            } catch (NumberFormatException e) {
+                Logger.error(TAG, "Invalid board ID: " + boardStr);
+            }
+        }
+
+        return mapping;
+    }
+
+    private static DeviceSettingOverride parseSettingOverride(XmlPullParser parser) {
+        final String key = attr(parser, "key");
+        final String typeStr = attr(parser, "type");
+        if (key == null || typeStr == null) {
+            return null;
+        }
+        final String forcedValueStr = attr(parser, "forced-value");
+
+        final DeviceSettingOverride override = new DeviceSettingOverride();
+        override.key = key;
+
+        switch (typeStr.toLowerCase(Locale.ROOT)) {
+            case "boolean":
+                override.type = DeviceSettingOverride.SettingType.BOOLEAN;
+                if (forcedValueStr != null) {
+                    override.forcedValue = "true".equals(forcedValueStr);
+                }
+                break;
+            case "integer":
+                override.type = DeviceSettingOverride.SettingType.INTEGER;
+                if (forcedValueStr != null) {
+                    try {
+                        override.forcedValue = Integer.parseInt(forcedValueStr);
+                    } catch (NumberFormatException e) {
+                        Logger.error(TAG, "Invalid integer value for setting " + key + ": " + forcedValueStr);
+                    }
+                }
+                break;
+            case "string":
+                override.type = DeviceSettingOverride.SettingType.STRING;
+                override.forcedValue = forcedValueStr;
+                break;
+            case "list":
+                override.type = DeviceSettingOverride.SettingType.LIST;
+                override.forcedValue = forcedValueStr;
+                break;
+            default:
+                Logger.error(TAG, "Unknown setting type: " + typeStr);
+                return null;
+        }
+
+        // default-value: what the setting reads as until the user picks one; unlike forced-value it
+        // does not lock it. Only string forms carry one (gesture-slot assignments).
+        final String defaultValueStr = attr(parser, "default-value");
+        if (defaultValueStr != null) {
+            if (override.type == DeviceSettingOverride.SettingType.STRING
+                    || override.type == DeviceSettingOverride.SettingType.LIST) {
+                override.defaultValue = defaultValueStr;
+            } else {
+                Logger.error(TAG, "Ignoring default-value on " + typeStr + " setting " + key
+                        + ": only string and list settings take one");
+            }
+        }
+
+        override.readOnly = "true".equals(attr(parser, "read-only"));
+        override.hidden = "true".equals(attr(parser, "hidden"));
+        return override;
+    }
+
+    /**
+     * Parse a {@code <ckb-key-grid width=".." height="..">} block of {@code <key>} cells
+     * (label + normalized cx/cy/w/h). Used to inject per-device CKB geometry.
+     */
+    private static CkbKeyGridConfig parseCkbKeyGrid(XmlPullParser parser)
+            throws XmlPullParserException, IOException {
+
+        final CkbKeyGridConfig grid = new CkbKeyGridConfig();
+        grid.width = intAttr(parser, "width", 0);
+        grid.height = intAttr(parser, "height", 0);
+
+        children(parser, "ckb-key-grid", (p, tag) -> {
+            if (!"key".equals(tag)) return;
+            final String label = attr(p, "label");
+            if (label != null && !label.isEmpty()) {
+                grid.cells.add(new CkbKeyGridConfig.Cell(label,
+                        floatAttr(p, "cx", 0f), floatAttr(p, "cy", 0f),
+                        floatAttr(p, "w", 0f), floatAttr(p, "h", 0f)));
+            }
+        });
+
+        if (!grid.cells.isEmpty()) {
+            Logger.info(TAG, "Parsed CKB key grid: " + grid.cells.size() + " cells");
+        }
+        return grid.cells.isEmpty() ? null : grid;
+    }
+}

@@ -1,0 +1,884 @@
+package dev.bbkb.ime.keyboard.auxbar.suggestions;
+
+import static dev.bbkb.ime.core.shared.StringHelper.*;
+
+import android.content.Context;
+import android.content.res.Resources;
+import android.os.SystemClock;
+import android.text.SpannableStringBuilder;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
+import android.util.AttributeSet;
+import android.util.TypedValue;
+import android.view.ContextThemeWrapper;
+import android.view.View;
+import android.widget.RelativeLayout;
+
+import androidx.appcompat.widget.AppCompatTextView;
+import androidx.core.content.ContextCompat;
+
+import dev.bbkb.ime.keyboard.Key;
+import dev.bbkb.ime.keyboard.Keyboard;
+import dev.bbkb.ime.keyboard.KeyboardColorManager;
+import dev.bbkb.ime.keyboard.KeyboardSwitcher;
+import dev.bbkb.ime.keyboard.MainKeyboardView;
+import dev.bbkb.ime.R;
+import dev.bbkb.ime.core.engine.EngineOps;
+import dev.bbkb.ime.core.suggestion.SuggestedWords;
+import dev.bbkb.ime.core.settings.util.SettingsManager;
+import dev.bbkb.ime.core.settings.util.SettingsValues;
+import dev.bbkb.ime.core.device.profile.DeviceProfile;
+import dev.bbkb.ime.core.keyevent.InputSource;
+import dev.bbkb.ime.core.shared.Logger;
+import dev.bbkb.ime.core.shared.GeometryUtils;
+import dev.bbkb.ime.core.shared.ScriptUtils;
+import dev.bbkb.ime.BuildConfig;
+
+import java.util.ArrayList;
+
+
+public final class FlickSuggestionView extends RelativeLayout {
+
+    private static final String TAG = "FlickSuggestionView";
+
+    /** How long drawing waits for the engine's Hangul decode before drawing the raw text. */
+    private static final long FLICK_DECODE_TIMEOUT_MS = 50L;
+
+    private float mHorizontalWordDistance;
+
+    private float mVerticalWordDistance;
+
+    private float mMinHorizontalWordDistance;
+
+    private float mMinVerticalWordDistance;
+
+    private int mSuggestedTextColor;
+
+    private int mTypedTextColor;
+
+    private final int mShadowColor;
+
+    private final float mLetterSize;
+
+    private final float mHorizontalWordDistanceFactor;
+
+    private final float mVerticalWordDistanceFactor;
+
+    private final float mHorizontalOffsetFactor;
+
+    private final float mTextVerticalPaddingFactor;
+
+    private final float mShadowRadius;
+
+    private ForegroundColorSpan mSuggestedColorSpan;
+
+    /** De-emphasized variants for non-default candidates (see [deEmphasized]). */
+    private ForegroundColorSpan mSuggestedColorSpanDim;
+
+    private ForegroundColorSpan mTypedColorSpanDim;
+
+    private ForegroundColorSpan mTypedColorSpan;
+
+    private ArrayList<PredictionView> mPredictionViews;
+
+    private int mVisibleCount;
+
+    private boolean mIsRtl;
+
+    private MainKeyboardView mKeyboardView;
+
+    private SuggestedWords mSuggestedWords;
+
+    private long mLastSelectionTime;
+
+    private FlickSuggestionAnimationView mAnimationView;
+
+    private Listener mListener;
+
+    /**
+     * What the last full render drew from, so an identical update can return before clear(). Dropped
+     * by {@link #hide}, {@link #updateKeyMetrics} and a flick pick.
+     */
+    private boolean mShownValid;
+    private SuggestedWords mShownWords;
+    private Keyboard mShownKeyboard;
+    private MainKeyboardView mShownKeyboardView;
+    private boolean mShownRtl;
+    private int mShownVisibility;
+    private boolean mShownSupported;
+    private boolean mShownOnKey;
+    private boolean mShownEmojiBoard;
+    private boolean mShownGesture;
+    private boolean mShownEmojiPredictions;
+    private Object mShownStyleSpec;
+    private final int[] mShownKeyboardLocation = new int[2];
+
+    /** While true, {@link #hide} leaves the spacebar word for the render in progress to set. */
+    private boolean mSpacebarTextDeferred;
+
+    
+    public interface Listener {
+        /**
+         * @param suggestedWordInfo the picked word
+         * @param inputSource where the pick came from
+         */
+        void onSuggestionPicked(SuggestedWords.SuggestedWordInfo suggestedWordInfo, InputSource inputSource);
+    }
+
+    public FlickSuggestionView(Context context, AttributeSet attributeSet) {
+        super(new ContextThemeWrapper(context, R.style.Theme_BlackberryKeyboard_IME), attributeSet);
+        this.mHorizontalWordDistance = 0.0f;
+        this.mVerticalWordDistance = 0.0f;
+        this.mMinHorizontalWordDistance = 0.0f;
+        this.mMinVerticalWordDistance = 0.0f;
+        this.mPredictionViews = new ArrayList<>();
+        this.mVisibleCount = 0;
+        this.mSuggestedWords = SuggestedWords.EMPTY;
+        Context themedContext = getContext();
+        Resources resources = themedContext.getResources();
+
+        // iconColor, lighter than textColor.
+        if (KeyboardColorManager.INSTANCE.isInitialized()) {
+            int iconColor = KeyboardColorManager.INSTANCE.getIconColor();
+            this.mSuggestedTextColor = iconColor;
+            this.mTypedTextColor = iconColor;
+        } else {
+            TypedValue typedValue = new TypedValue();
+            themedContext.getTheme().resolveAttribute(android.R.attr.textColorPrimary, typedValue, true);
+            this.mSuggestedTextColor = typedValue.data;
+            this.mTypedTextColor = this.mSuggestedTextColor;
+        }
+        this.mShadowColor = ContextCompat.getColor(themedContext, R.color.flick_suggestion_shadow_color);
+        this.mLetterSize = resources.getDimension(R.dimen.config_flick_prediction_letter_size);
+        this.mHorizontalWordDistanceFactor = resources.getFraction(R.fraction.config_flick_prediction_minimum_horizontal_word_distance_factor, 1, 1);
+        this.mVerticalWordDistanceFactor = resources.getFraction(R.fraction.config_flick_prediction_minimum_vertical_word_distance_factor, 1, 1);
+        this.mHorizontalOffsetFactor = resources.getFraction(R.fraction.config_flick_prediction_horizontal_offset_factor, 1, 1);
+        this.mTextVerticalPaddingFactor = resources.getFraction(R.fraction.config_flick_prediction_text_vertical_padding_factor, 1, 1);
+        this.mShadowRadius = resources.getDimension(R.dimen.config_flick_prediction_shadow_radius);
+        this.mMinHorizontalWordDistance = resources.getDimension(R.dimen.config_flick_prediction_minimum_horizontal_word_distance);
+        this.mMinVerticalWordDistance = resources.getDimension(R.dimen.config_flick_prediction_minimum_vertical_word_distance);
+        setTextColors(this.mSuggestedTextColor, this.mTypedTextColor);
+        for (int i = 0; i < 7; i++) {
+            PredictionView c0826b = new PredictionView(themedContext);
+            this.mPredictionViews.add(c0826b);
+            addView(c0826b);
+        }
+        this.mAnimationView = new FlickSuggestionAnimationView(themedContext, attributeSet);
+    }
+
+    private void setTextColors(int suggested, int typed) {
+        this.mSuggestedTextColor = suggested;
+        this.mTypedTextColor = typed;
+        this.mSuggestedColorSpan = new ForegroundColorSpan(suggested);
+        this.mTypedColorSpan = new ForegroundColorSpan(typed);
+        this.mSuggestedColorSpanDim = new ForegroundColorSpan(dimColor(suggested));
+        this.mTypedColorSpanDim = new ForegroundColorSpan(dimColor(typed));
+    }
+
+    /**
+     * Follows the palette's icon color, checked per render: a dark/light switch does not re-inflate
+     * the input view (method.xml declares uiMode).
+     *
+     * @return whether the colors changed (what is drawn is then stale)
+     */
+    private boolean refreshTextColors() {
+        if (!KeyboardColorManager.INSTANCE.isInitialized()) {
+            return false;
+        }
+        int iconColor = KeyboardColorManager.INSTANCE.getIconColor();
+        if (iconColor == this.mSuggestedTextColor && iconColor == this.mTypedTextColor) {
+            return false;
+        }
+        setTextColors(iconColor, iconColor);
+        return true;
+    }
+
+    /** @param listener receives picked suggestions */
+    public void init(Listener listener, MainKeyboardView mainKeyboardView) {
+        this.mListener = listener;
+        this.mKeyboardView = mainKeyboardView;
+    }
+
+    private Keyboard getKeyboard() {
+        return KeyboardSwitcher.getInstance().getMainKeyboardView().getKeyboard();
+    }
+
+    private boolean isAlphabetKeyboard() {
+        Keyboard keyboard = getKeyboard();
+        return keyboard != null && keyboard.mId.isAlphabetKeyboard();
+    }
+
+    private boolean isSymbolsKeyboard() {
+        Keyboard keyboard = getKeyboard();
+        return keyboard != null && keyboard.mId.isSymbolsKeyboard();
+    }
+
+    private boolean isPkbKeyboard() {
+        Keyboard keyboard = getKeyboard();
+        return keyboard != null && keyboard.mId.isPkbKeyboard();
+    }
+
+    private boolean isSupportedKeyboard() {
+        return isAlphabetKeyboard() || isSymbolsKeyboard() || (DeviceProfile.current().isVkbDevice() && DeviceProfile.isPhysicalKeyboardAvailable(getContext()) && isPkbKeyboard());
+    }
+
+    private boolean isEmojiPredictionsEnabled() {
+        return SettingsManager.getInstance().getSettingsValues().isEmojiPredictionsEnabled;
+    }
+
+    private boolean isEmojiKeyboardShowing() {
+        return KeyboardSwitcher.getInstance().isEmojiKeyboardShowing();
+    }
+
+    private boolean isOnKeyPredictionEnabled() {
+        SettingsValues settingsValues = SettingsManager.getInstance().getSettingsValues();
+        return settingsValues.isOnKeyPredictionsEnabled && settingsValues.isPredictionsEnabled;
+    }
+
+    private boolean isGestureInputEnabled() {
+        return SettingsManager.getInstance().getSettingsValues().isVkbGestureInputEnabledForLocale();
+    }
+
+    /** @param word unused */
+    public void clearSuggestions(String word) {
+        setSuggestions(SuggestedWords.EMPTY, this.mIsRtl);
+    }
+
+    /** @param suggestionUpdatePending true to only reset the metrics, false to also lay the current words out again */
+    public void updateKeyMetrics(boolean suggestionUpdatePending) {
+        Keyboard keyboard;
+        this.mHorizontalWordDistance = this.mMinHorizontalWordDistance;
+        this.mVerticalWordDistance = this.mMinVerticalWordDistance;
+        if (this.mAnimationView.isRunning()) {
+            this.mAnimationView.stop();
+        }
+        if (isSupportedKeyboard() && (keyboard = getKeyboard()) != null) {
+            Key key = keyboard.getKeys().get(1);
+            this.mHorizontalWordDistance = key.getHeight() * this.mHorizontalWordDistanceFactor;
+            this.mVerticalWordDistance = key.getHeight() * this.mVerticalWordDistanceFactor;
+        }
+        if (suggestionUpdatePending) {
+            return;
+        }
+        this.mShownValid = false;
+        setSuggestions(this.mSuggestedWords, this.mIsRtl);
+    }
+
+    public void clear() {
+        hide();
+        this.mSuggestedWords = SuggestedWords.EMPTY;
+    }
+
+    public void hide() {
+        this.mShownValid = false;
+        if (this.mKeyboardView == null) {
+            return;
+        }
+        // INVISIBLE, not GONE: GONE->VISIBLE requests a layout of the whole keyboard frame,
+        // INVISIBLE->VISIBLE only redraws. Nothing here draws or takes touches while INVISIBLE.
+        setVisibility(View.INVISIBLE);
+        for (int i = 0; i < this.mVisibleCount; i++) {
+            this.mPredictionViews.get(i).setVisibility(View.INVISIBLE);
+        }
+        this.mVisibleCount = 0;
+        if (!this.mSpacebarTextDeferred) {
+            this.mKeyboardView.setAutoCorrectionText("");
+        }
+    }
+
+    /**
+     * The suggestion presenter's entry point. Clears only where {@link #setSuggestions} would not
+     * (the keyboard view slid sideways); a pre-clear on every update would relayout the frame.
+     */
+    public void showSuggestions(SuggestedWords words, boolean rtl) {
+        MainKeyboardView mainKeyboardView = this.mKeyboardView;
+        if (mainKeyboardView == null || mainKeyboardView.getX() != 0.0f) {
+            if (getVisibility() == View.VISIBLE) {
+                clear();
+            }
+            return;
+        }
+        setSuggestions(words, rtl);
+    }
+
+    /**
+     * @param suggestedWords the words to show
+     * @param isRtl true for a right-to-left layout
+     */
+    public void setSuggestions(SuggestedWords suggestedWords, boolean isRtl) {
+        MainKeyboardView mainKeyboardView = this.mKeyboardView;
+        if (mainKeyboardView != null && mainKeyboardView.getX() == 0.0f) {
+            boolean colorsChanged = refreshTextColors();
+            if (!colorsChanged && suggestedWords != null && suggestedWords.size() > 0 && isShowing(suggestedWords, isRtl)) {
+                // Already drawn; keep the new object so a flick picks the newest word info.
+                this.mSuggestedWords = suggestedWords;
+                this.mShownWords = suggestedWords;
+                return;
+            }
+            // Set the spacebar word once: hide() clearing it then the render setting it again
+            // defeats MainKeyboardView's equality guard and re-records the keyboard.
+            this.mSpacebarTextDeferred = true;
+            try {
+                clear();
+                this.mIsRtl = isRtl;
+                Keyboard keyboard = this.mKeyboardView.getKeyboard();
+                if (keyboard == null) {
+                    return;
+                }
+                if (suggestedWords == null || suggestedWords.size() > 0) {
+                    this.mSuggestedWords = suggestedWords;
+                    boolean isVkb = isSupportedKeyboard();
+                    boolean onKeyEnabled = isOnKeyPredictionEnabled();
+                    boolean notShowingEmoji = !isEmojiKeyboardShowing();
+                    if (isVkb && onKeyEnabled && notShowingEmoji) {
+                        showOnKeyPredictions(this.mSuggestedWords, keyboard);
+                    } else {
+                        if (isEmojiKeyboardShowing()) {
+                            return;
+                        }
+                        showAutoCorrectPrediction(this.mSuggestedWords, keyboard);
+                    }
+                    if (suggestedWords != null) {
+                        rememberShown(suggestedWords, keyboard, isRtl);
+                    }
+                }
+            } finally {
+                if (this.mSpacebarTextDeferred) {
+                    this.mSpacebarTextDeferred = false;
+                    this.mKeyboardView.setAutoCorrectionText("");
+                }
+            }
+        }
+    }
+
+    /** The spacebar word, set once per render (see {@link #mSpacebarTextDeferred}). */
+    private void setSpacebarText(String text) {
+        this.mSpacebarTextDeferred = false;
+        this.mKeyboardView.setAutoCorrectionText(text);
+    }
+
+    /** Whether {@code words} would draw exactly what the last render left on screen. */
+    private boolean isShowing(SuggestedWords words, boolean rtl) {
+        if (!this.mShownValid) {
+            return false;
+        }
+        MainKeyboardView view = this.mKeyboardView;
+        if (view != this.mShownKeyboardView || view.getKeyboard() != this.mShownKeyboard
+                || rtl != this.mShownRtl || getVisibility() != this.mShownVisibility) {
+            return false;
+        }
+        if (isSupportedKeyboard() != this.mShownSupported
+                || isOnKeyPredictionEnabled() != this.mShownOnKey
+                || isEmojiKeyboardShowing() != this.mShownEmojiBoard
+                || isGestureInputEnabled() != this.mShownGesture
+                || isEmojiPredictionsEnabled() != this.mShownEmojiPredictions
+                || KeyboardColorManager.styleSpec() != this.mShownStyleSpec) {
+            return false;
+        }
+        int[] location = keyboardLocationInWindow();
+        if (location[0] != this.mShownKeyboardLocation[0] || location[1] != this.mShownKeyboardLocation[1]) {
+            return false;
+        }
+        return dev.bbkb.ime.keyboard.auxbar.UnifiedSuggestionView.rendersSame(this.mShownWords, words);
+    }
+
+    private void rememberShown(SuggestedWords words, Keyboard keyboard, boolean rtl) {
+        this.mShownWords = words;
+        this.mShownKeyboard = keyboard;
+        this.mShownKeyboardView = this.mKeyboardView;
+        this.mShownRtl = rtl;
+        this.mShownVisibility = getVisibility();
+        this.mShownSupported = isSupportedKeyboard();
+        this.mShownOnKey = isOnKeyPredictionEnabled();
+        this.mShownEmojiBoard = isEmojiKeyboardShowing();
+        this.mShownGesture = isGestureInputEnabled();
+        this.mShownEmojiPredictions = isEmojiPredictionsEnabled();
+        this.mShownStyleSpec = KeyboardColorManager.styleSpec();
+        int[] location = keyboardLocationInWindow();
+        this.mShownKeyboardLocation[0] = location[0];
+        this.mShownKeyboardLocation[1] = location[1];
+        this.mShownValid = true;
+    }
+
+    /**
+     * @param suggestedWords the words to show
+     * @param keyboard the current keyboard
+     */
+    private void showAutoCorrectPrediction(SuggestedWords suggestedWords, Keyboard keyboard) {
+        if (suggestedWords.mAutoCorrectWord != null && suggestedWords.mWillAutoCorrect) {
+            Key keyM6604b = keyboard.getKeyByCode(32);
+            if (keyM6604b != null) {
+                setSpacebarText(suggestedWords.getWord(1));
+                if (isGestureInputEnabled()) {
+                    return;
+                }
+                String strMo4284a = suggestedWords.getWord(0);
+                this.mPredictionViews.get(this.mVisibleCount).setPrediction(0, (keyM6604b.getWidth() / 2) + keyM6604b.getX(), keyM6604b.getY(), true, strMo4284a, strMo4284a);
+                this.mPredictionViews.get(this.mVisibleCount).setVisibility(View.VISIBLE);
+                this.mVisibleCount = 1;
+                setVisibility(View.VISIBLE);
+                return;
+            }
+            return;
+        }
+        setSpacebarText("");
+    }
+
+    /** The candidate-hierarchy brightness step: #ffffff -> #d8d8d8 (~85%). */
+    private static final float DE_EMPHASIS_BRIGHTNESS = 216f / 255f;
+
+    private static int dimColor(int color) {
+        return android.graphics.Color.argb(android.graphics.Color.alpha(color),
+                Math.round(android.graphics.Color.red(color) * DE_EMPHASIS_BRIGHTNESS),
+                Math.round(android.graphics.Color.green(color) * DE_EMPHASIS_BRIGHTNESS),
+                Math.round(android.graphics.Color.blue(color) * DE_EMPHASIS_BRIGHTNESS));
+    }
+
+    /**
+     * With an auto-correction pending, every candidate but the one that commits on space (index 1)
+     * is drawn a weight step lighter and dimmer. Unlike the strip, a valid typed word alone does
+     * not de-emphasize: it usually has no on-key slot, so dimming everything would look broken.
+     */
+    private boolean deEmphasized(int wordIndex) {
+        SuggestedWords words = this.mSuggestedWords;
+        return words != null && words.mWillAutoCorrect && wordIndex != 1;
+    }
+
+    /** One weight step down from the key-face type (500->400, 400->300; bold->normal below P). */
+    private static android.graphics.Typeface deEmphasizedTypeface(android.graphics.Typeface base) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            int weight = base != null ? base.getWeight() : 400;
+            return android.graphics.Typeface.create(
+                    base != null ? base : android.graphics.Typeface.DEFAULT,
+                    Math.max(300, weight - 100), false);
+        }
+        return android.graphics.Typeface.DEFAULT;
+    }
+
+    /** @param text the word, Hangul decoded by the engine (raw text on timeout) */
+    private static int[] toCodePoints(String text) {
+        if (!TextUtils.isEmpty(text) && ScriptUtils.isLetterPartOfScript(text.charAt(0), 8)) {
+            final String raw = text;
+            String decoded = EngineOps.query("flickDecodeHangul", FLICK_DECODE_TIMEOUT_MS, raw,
+                    sdk -> sdk.decodeHangul(raw, true));
+            text = decoded != null ? decoded : raw;
+        }
+        return toCodePointArray(text, 0, text.length());
+    }
+
+    /**
+     * @param suggestedWords the words to show
+     * @param keyboard the current keyboard
+     */
+    private void showOnKeyPredictions(SuggestedWords suggestedWords, Keyboard keyboard) {
+        String string = "";
+        ArrayList<Integer> arrayList = new ArrayList<>();
+        int i;
+        int i2;
+        
+        if (suggestedWords.mAutoCorrectWord != null) {
+            string = suggestedWords.getWord(0).toString();
+            i = 0;
+        } else {
+            i = -1;
+        }
+        
+        int[] iArrM5278b = toCodePoints(string);
+        int length = iArrM5278b.length;
+        
+        if (suggestedWords.mWillAutoCorrect) {
+            setSpacebarText(suggestedWords.getWord(1).toString());
+            i2 = 1;
+        } else {
+            setSpacebarText("");
+            i2 = -1;
+        }
+        
+        boolean z6 = false;
+        int i12 = 0;
+        boolean hasEmojiSuggestion = false;
+        int emojiSuggestionIndex = -1;
+        
+        for (int i13 = 0; i13 < suggestedWords.size(); i13++) {
+            if (suggestedWords.getWordInfo(i13).isKind(11)) {
+                // Emoji go on the period key (showEmojiPrediction), never on letter keys.
+                hasEmojiSuggestion = true;
+                if (emojiSuggestionIndex < 0) {
+                    emojiSuggestionIndex = i13;
+                }
+                continue;
+            }
+            
+            String strMo4284a = suggestedWords.getWord(i13);
+            int[] iArrM5278b2 = toCodePoints(strMo4284a);
+            int length2 = iArrM5278b2.length;
+            boolean z7 = iArrM5278b.length != 0 && strMo4284a.startsWith(string);
+            
+            Key keyM6604b = null;
+            boolean z2 = false;
+            boolean z3 = z6;
+            int i3 = -1;
+            if (i13 != i2) {
+                if (length2 > 1 && i12 < 5) {
+                    z2 = true;
+                }
+            }
+
+            // Must stay separate from the check above, not nested in it.
+            if (i13 == i) {
+                if (i2 >= 0 && i2 != i) {
+                    keyM6604b = keyboard.getKeyByCode(32);
+                    i3 = 32;
+                }
+                z2 = false;
+                z3 = true;
+            }
+            
+            int i4 = i3;
+            boolean z4 = z7;
+            Key keyM6607c = keyM6604b;
+            if (z2) {
+                int i14 = 0;
+                int i15 = 0;
+                int i16 = -1;
+                
+                while (i14 < length2) {
+                    int i17 = iArrM5278b2[i14];
+                    int i18 = i14 - i15;
+                    
+                    if (i18 < length) {
+                        if (i17 != iArrM5278b[i18]) {
+                            if (i17 == 32) {
+                                i15++;
+                            }
+                            z4 = false;
+                        }
+                    }
+                    
+                    if (i17 != 32) {
+                        keyM6607c = keyboard.getActionKeyForCode(i17);
+                        if (keyM6607c != null) {
+                            int iM6232c = keyM6607c.getCode();
+                            
+                            if (i18 < length) {
+                                if (iArrM5278b[i18] == i17) {
+                                    boolean z5 = i14 == length2 - 1;
+                                    int i11;
+                                    
+                                    if (z5) {
+                                        if (i16 >= 0) {
+                                            i11 = i16;
+                                        } else if (i2 < 0) {
+                                            i11 = 32;
+                                        } else {
+                                            i11 = iM6232c;
+                                            z5 = false;
+                                        }
+                                    } else {
+                                        i11 = iM6232c;
+                                    }
+                                    
+                                    if (z5) {
+                                        if (length2 - i15 <= length && !arrayList.contains(Integer.valueOf(i11))) {
+                                            i4 = i11;
+                                            break;
+                                        } else if (i16 < 0) {
+                                            i16 = i11;
+                                        }
+                                    } else {
+                                        i16 = i11;
+                                    }
+                                } else {
+                                    z4 = false;
+                                    if (length2 - i15 <= length && !arrayList.contains(Integer.valueOf(iM6232c))) {
+                                        i4 = iM6232c;
+                                        break;
+                                    }
+                                }
+                            } else if (!arrayList.contains(Integer.valueOf(iM6232c))) {
+                                i4 = iM6232c;
+                                break;
+                            }
+                        }
+                    } else if (i14 == length2 - 1 && i2 < 0) {
+                        keyM6607c = keyboard.getKeyByCode(32);
+                        i4 = 32;
+                        break;
+                    }
+                    
+                    i14++;
+                }
+            }
+            
+            if (i4 >= 0 && keyM6607c != null) {
+                this.mPredictionViews.get(this.mVisibleCount).setPrediction(i13, keyM6607c.getX() + (keyM6607c.getWidth() / 2), keyM6607c.getY(), z4, strMo4284a, string);
+                
+                boolean z8 = i13 == i;
+                if (!z8 && !collidesWithVisible(this.mPredictionViews.get(this.mVisibleCount))) {
+                    z8 = true;
+                }
+                
+                if (z8) {
+                    arrayList.add(Integer.valueOf(i4));
+                    this.mPredictionViews.get(this.mVisibleCount).setVisibility(View.VISIBLE);
+                    this.mVisibleCount++;
+                    
+                    if (i13 != i) {
+                        i12++;
+                    }
+                    
+                    if (i12 == 5 && (i < 0 || (i >= 0 && z3))) {
+                        break;
+                    }
+                }
+            }
+            
+            z6 = z3;
+        }
+        
+        if (keyboard.getKeyByCode(46) != null && !arrayList.contains(46)) {
+            if (hasEmojiSuggestion) {
+                Logger.debug(TAG, "Emoji suggestion found at index " + emojiSuggestionIndex + ", calling showEmojiPrediction()");
+            }
+            showEmojiPrediction(suggestedWords, keyboard, string);
+        }
+        
+        if (this.mVisibleCount > 0) {
+            setVisibility(View.VISIBLE);
+        }
+    }
+
+    /**
+     * @param suggestedWords the words to search for an emoji
+     * @param keyboard the current keyboard
+     * @param typedWord the typed prefix
+     */
+    private void showEmojiPrediction(SuggestedWords suggestedWords, Keyboard keyboard, String typedWord) {
+        Key keyM6604b;
+        String strMo4284a;
+        if (this.mVisibleCount <= 0 || !isEmojiPredictionsEnabled() || (keyM6604b = keyboard.getKeyByCode(46)) == null) {
+            return;
+        }
+        int i = 0;
+        while (true) {
+            if (i >= suggestedWords.size()) {
+                strMo4284a = null;
+                break;
+            } else {
+                if (suggestedWords.getWordInfo(i).isKind(11)) {
+                    strMo4284a = suggestedWords.getWord(i);
+                    break;
+                }
+                i++;
+            }
+        }
+        if (strMo4284a != null) {
+            this.mPredictionViews.get(this.mVisibleCount).setPrediction(i, keyM6604b.getX() + (keyM6604b.getWidth() / 2), keyM6604b.getY(), false, strMo4284a, typedWord);
+            if (collidesWithVisible(this.mPredictionViews.get(this.mVisibleCount))) {
+                return;
+            }
+            this.mPredictionViews.get(this.mVisibleCount).setVisibility(View.VISIBLE);
+            this.mVisibleCount++;
+        }
+    }
+
+    /** @param predictionView the prediction about to be shown */
+    private boolean collidesWithVisible(PredictionView predictionView) {
+        if (this.mVisibleCount <= 0) {
+            return false;
+        }
+        float y = predictionView.getY() + predictionView.getMeasuredHeight();
+        float x = predictionView.getX() + predictionView.getMeasuredWidth();
+        float f = this.mHorizontalWordDistance * this.mHorizontalOffsetFactor;
+        for (int i = 0; i < this.mVisibleCount; i++) {
+            PredictionView c0826b2 = this.mPredictionViews.get(i);
+            float y2 = c0826b2.getY() - this.mVerticalWordDistance;
+            if (c0826b2.getY() + c0826b2.getMeasuredHeight() + this.mVerticalWordDistance >= predictionView.getY() && y2 <= y) {
+                float x2 = c0826b2.getX() - this.mHorizontalWordDistance;
+                if (c0826b2.getX() + c0826b2.getMeasuredWidth() + this.mHorizontalWordDistance >= predictionView.getX() && x2 <= x) {
+                    float x3 = c0826b2.getX() + (c0826b2.getMeasuredWidth() / 2.0f);
+                    float x4 = predictionView.getX() + (predictionView.getMeasuredWidth() / 2.0f);
+                    if (Math.abs(c0826b2.getY() - predictionView.getY()) > this.mVerticalWordDistance && Math.abs(x3 - x4) > f) {
+                        // Guarded here: Logger.debug gates inside the callee, after the
+                        // concatenation is built (this loop runs per keystroke).
+                        if (BuildConfig.DEBUG) {
+                            Logger.debug(TAG, "\"" + ((Object) predictionView.getText()) + "\" and \"" + ((Object) c0826b2.getText()) + "\" are not in the same column.");
+                        }
+                    } else {
+                        if (BuildConfig.DEBUG) {
+                            Logger.debug(TAG, "\"" + ((Object) predictionView.getText()) + "\" and \"" + ((Object) c0826b2.getText()) + "\" are colliding. Remove: \"" + ((Object) predictionView.getText()) + "\"");
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @param x x in keyboard view coordinates
+     * @param y y in keyboard view coordinates
+     * @param maxDistance the largest distance that still matches
+     */
+    private int findNearestPrediction(float x, float y, float maxDistance) {
+                int[] location = new int[2];
+        this.mKeyboardView.getLocationInWindow(location);
+        float f4 = x + location[0];
+        float f5 = y + location[1];
+        float f6 = maxDistance + 1.0f;
+        int i = -1;
+        for (int i2 = 0; i2 < this.mVisibleCount; i2++) {
+            float top = this.mPredictionViews.get(i2).getY() + (this.mPredictionViews.get(i2).getMeasuredHeight() * this.mTextVerticalPaddingFactor);
+            if (top <= f5) {
+                float distanceToRect = GeometryUtils.getDistanceToRect(f4, f5, this.mPredictionViews.get(i2).getX(), top, this.mPredictionViews.get(i2).getMeasuredWidth(), this.mPredictionViews.get(i2).getMeasuredHeight());
+                if (distanceToRect < f6) {
+                    i = i2;
+                    f6 = distanceToRect;
+                }
+            }
+        }
+        return i;
+    }
+
+    /**
+     * @param x x in keyboard view coordinates
+     * @param y y in keyboard view coordinates
+     * @param maxDistance the largest distance that still matches
+     */
+    public boolean handleFlick(float x, float y, float maxDistance) {
+        int iM5275b;
+        int iM5302a;
+        long jUptimeMillis = SystemClock.uptimeMillis();
+        if (jUptimeMillis < this.mLastSelectionTime + 200) {
+            return false;
+        }
+        iM5275b = findNearestPrediction(x, y, maxDistance);
+        if (iM5275b < 0) {
+            return false;
+        }
+        iM5302a = this.mPredictionViews.get(iM5275b).getWordIndex();
+        if (iM5302a >= this.mSuggestedWords.size()) {
+            return false;
+        }
+        this.mLastSelectionTime = jUptimeMillis;
+        this.mListener.onSuggestionPicked(this.mSuggestedWords.getWordInfo(iM5302a), InputSource.SOFTWARE);
+        this.mPredictionViews.get(iM5275b).setVisibility(View.INVISIBLE);
+        // The picked word is hidden: the next update must redraw even if its list is equal.
+        this.mShownValid = false;
+        this.mAnimationView.animateSelection(this.mPredictionViews.get(iM5275b), this.mTypedTextColor, getParent());
+        return true;
+    }
+
+    /**
+     * No-op: VkbGestureListener still dispatches single-tap-up here but nothing uses it.
+     *
+     * @param x x
+     * @param y y
+     */
+    public void onSingleTap(float x, float y) {
+    }
+
+    /**
+     * No-op, as {@link #onSingleTap}.
+     *
+     * @param x x
+     * @param y y
+     */
+    public void onShowPress(float x, float y) {
+    }
+
+    /** Reusable scratch for the keyboard view's window position. */
+    private final int[] keyboardLocation = new int[2];
+
+    private int[] keyboardLocationInWindow() {
+        this.mKeyboardView.getLocationInWindow(this.keyboardLocation);
+        return this.keyboardLocation;
+    }
+
+    
+    private class PredictionView extends AppCompatTextView {
+
+        private int mWordIndex;
+
+        private SpannableStringBuilder mTextBuilder;
+
+        public PredictionView(Context context) {
+            super(context);
+            setVisibility(View.GONE);
+            setTextSize(0, FlickSuggestionView.this.mLetterSize);
+            this.mTextBuilder = new SpannableStringBuilder();
+        }
+
+        public int getWordIndex() {
+            return this.mWordIndex;
+        }
+
+        /**
+         * @param wordIndex the word's index in the suggestions
+         * @param x the centre x (key coordinates)
+         * @param y the key's top y (key coordinates)
+         * @param highlightTypedPrefix true to colour the typed prefix {@code typedPrefix} apart from the rest
+         * @param word the word
+         * @param typedPrefix the typed prefix
+         */
+        public void setPrediction(int wordIndex, int x, int y, boolean highlightTypedPrefix, String word, String typedPrefix) {
+            this.mWordIndex = wordIndex;
+            // Applied per show, not in the constructor, so theme switches take effect.
+            dev.bbkb.ime.keyboard.StyleSpec spec = KeyboardColorManager.styleSpec();
+            boolean deEmphasized = FlickSuggestionView.this.deEmphasized(wordIndex);
+            setTextSize(0, FlickSuggestionView.this.mLetterSize * spec.getPredictionTextScale());
+            android.graphics.Typeface typeface = spec.getMediumKeyTypeface()
+                    ? dev.bbkb.ime.keyboard.KeyboardView
+                            .mediumWeightTypeface(android.graphics.Typeface.DEFAULT)
+                    : android.graphics.Typeface.DEFAULT;
+            setTypeface(deEmphasized ? deEmphasizedTypeface(typeface) : typeface);
+            ForegroundColorSpan suggestedSpan = deEmphasized
+                    ? FlickSuggestionView.this.mSuggestedColorSpanDim
+                    : FlickSuggestionView.this.mSuggestedColorSpan;
+            ForegroundColorSpan typedSpan = deEmphasized
+                    ? FlickSuggestionView.this.mTypedColorSpanDim
+                    : FlickSuggestionView.this.mTypedColorSpan;
+            int[] iArr = FlickSuggestionView.this.keyboardLocationInWindow();
+            this.mTextBuilder.clear();
+            this.mTextBuilder.clearSpans();
+            this.mTextBuilder.append((CharSequence) word);
+            if (highlightTypedPrefix) {
+                if (FlickSuggestionView.this.getCurrentKeyboardLocale().equals("hi")) {
+                    this.mTextBuilder.setSpan(suggestedSpan, 0, word.length(), 17);
+                } else {
+                    this.mTextBuilder.setSpan(typedSpan, 0, typedPrefix.length(), 17);
+                    this.mTextBuilder.setSpan(suggestedSpan, typedPrefix.length(), word.length(), 17);
+                }
+            } else {
+                this.mTextBuilder.setSpan(suggestedSpan, 0, word.length(), 17);
+            }
+            setText(this.mTextBuilder);
+            measure(0, 0);
+            float finalX = x - (getMeasuredWidth() / 2);
+            float finalY = (y + iArr[1]) - (getMeasuredHeight() * FlickSuggestionView.this.mTextVerticalPaddingFactor);
+            setX(finalX);
+            setY(finalY);
+            int width = iArr[0] + FlickSuggestionView.this.mKeyboardView.getWidth();
+            if (getX() < iArr[0]) {
+                setX(iArr[0]);
+            } else if (getX() + getMeasuredWidth() > width) {
+                setX(width - getMeasuredWidth());
+            }
+            // A drop shadow keeps floating text legible over sculpted caps (BB10 style).
+            if (spec.getPredictionDropShadow()) {
+                float density = getResources().getDisplayMetrics().density;
+                setShadowLayer(FlickSuggestionView.this.mShadowRadius, 0.0f,
+                        1.5f * density, FlickSuggestionView.this.mShadowColor);
+            } else {
+                setShadowLayer(0.0f, 0.0f, 0.0f, 0);
+            }
+        }
+
+    }
+
+    public String getCurrentKeyboardLocale() {
+        SettingsManager sharedPreferencesOnSharedPreferenceChangeListenerC0774c = this.mKeyboardView.getmSettings();
+        return sharedPreferencesOnSharedPreferenceChangeListenerC0774c != null ? sharedPreferencesOnSharedPreferenceChangeListenerC0774c.getSettingsValues().locale.getLanguage() : "";
+    }
+}

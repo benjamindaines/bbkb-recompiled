@@ -1,0 +1,214 @@
+package dev.bbkb.ime.keyboard.internal;
+
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.content.res.Resources;
+import android.view.View;
+import android.view.ViewGroup;
+
+import dev.bbkb.ime.core.shared.CoordinateUtils;
+import dev.bbkb.ime.core.shared.ViewLayoutUtils;
+import dev.bbkb.ime.keyboard.Key;
+
+import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+
+
+
+/**
+ * Places, shows and dismisses the key-press preview bubbles in the full-window preview placer.
+ * A preview stays a VISIBLE child for good: show/hide is alpha and moving is translation, so a
+ * press damages only the bubble. Visibility or margin changes would re-record the whole placer
+ * (a large refresh per keystroke on e-ink).
+ */
+public final class KeyPreviewChoreographer {
+
+    private static final String TAG = "KeyPreviewChoreographer";
+
+    private final ArrayDeque<KeyPreviewView> mFreeKeyPreviewViews = new ArrayDeque<>();
+
+    private final HashMap<Key, KeyPreviewView> mShowingKeyPreviewViews = new HashMap<>();
+
+    private final KeyPreviewDrawParams mParams;
+
+    public KeyPreviewChoreographer(KeyPreviewDrawParams keyPreviewDrawParams) {
+        this.mParams = keyPreviewDrawParams;
+    }
+
+    public KeyPreviewView getKeyPreviewView(Key key, ViewGroup viewGroup) {
+        KeyPreviewView c1064wRemove = this.mShowingKeyPreviewViews.remove(key);
+        if (c1064wRemove != null) {
+            return c1064wRemove;
+        }
+        KeyPreviewView c1064wPoll = this.mFreeKeyPreviewViews.poll();
+        if (c1064wPoll != null) {
+            if (c1064wPoll.getParent() != viewGroup) {
+                // The placer drops its children on detach, so a pooled view may be unattached.
+                if (c1064wPoll.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) c1064wPoll.getParent()).removeView(c1064wPoll);
+                }
+                viewGroup.addView(c1064wPoll, ViewLayoutUtils.newLayoutParam(viewGroup, 0, 0));
+            }
+            return c1064wPoll;
+        }
+        KeyPreviewView c1064w = new KeyPreviewView(viewGroup.getContext(), null);
+        // Hidden until placed; added once, so later presses never change the placer's children.
+        c1064w.setPreviewShown(false);
+        viewGroup.addView(c1064w, ViewLayoutUtils.newLayoutParam(viewGroup, 0, 0));
+        return c1064w;
+    }
+
+    public void dismissAllKeyPreviews() {
+        Iterator it = new HashSet(this.mShowingKeyPreviewViews.keySet()).iterator();
+        while (it.hasNext()) {
+            dismissKeyPreview((Key) it.next(), false);
+        }
+    }
+
+    /** @param withAnimation true to animate the dismissal */
+    public void dismissKeyPreview(Key key, boolean withAnimation) {
+        KeyPreviewView c1064w;
+        if (key == null || (c1064w = this.mShowingKeyPreviewViews.get(key)) == null) {
+            return;
+        }
+        Object tag = c1064w.getTag();
+        if (withAnimation && (tag instanceof KeyPreviewAnimators)) {
+            ((KeyPreviewAnimators) tag).startDismiss();
+            return;
+        }
+        this.mShowingKeyPreviewViews.remove(key);
+        if (tag instanceof Animator) {
+            ((Animator) tag).cancel();
+        }
+        c1064w.setTag(null);
+        c1064w.setPreviewShown(false);
+        this.mFreeKeyPreviewViews.add(c1064w);
+    }
+
+    /**
+     * @param keyboardViewWidth width of the area the preview must stay inside
+     * @param keyboardOrigin origin of the keyboard view in the placer
+     * @param withAnimation true to animate the show-up
+     */
+    public void placeAndShowKeyPreview(Key key, KeyboardIconSet keyboardIconSet, KeyDrawParams keyDrawParams, int keyboardViewWidth, int[] keyboardOrigin, ViewGroup viewGroup, boolean withAnimation) {
+        KeyPreviewView c1064wM7424a = getKeyPreviewView(key, viewGroup);
+        placeKeyPreview(key, c1064wM7424a, keyboardIconSet, keyDrawParams, keyboardViewWidth, keyboardOrigin);
+        showKeyPreview(key, c1064wM7424a, withAnimation);
+    }
+
+    private void placeKeyPreview(Key key, KeyPreviewView keyPreviewView, KeyboardIconSet keyboardIconSet, KeyDrawParams keyDrawParams, int keyboardViewWidth, int[] originCoords) {
+        int i2;
+        keyPreviewView.setPreviewVisual(key, keyboardIconSet, keyDrawParams);
+
+        // Width = key width, height = 2x key height.
+        int keyWidth = key.getWidth();
+        int keyHeight = key.getHeight();
+        keyPreviewView.setPreviewDimensions(keyWidth, keyHeight * 2);
+        
+        keyPreviewView.measure(-2, -2);
+        int measuredWidth = keyPreviewView.getMeasuredWidth();
+        int measuredHeight = keyPreviewView.getMeasuredHeight();
+        this.mParams.setGeometry(keyPreviewView);
+        int i3 = this.mParams.mPreviewHeight;
+        int i4 = 2;
+        int iM6218ad = (key.getDrawX() - ((measuredWidth - key.getDrawWidth()) / 2)) + CoordinateUtils.x(originCoords);
+        if (iM6218ad < 0) {
+            i2 = 0;
+            i4 = 1;
+        } else {
+            i2 = keyboardViewWidth - measuredWidth;
+            if (iM6218ad <= i2) {
+                i2 = iM6218ad;
+                i4 = 0;
+            }
+        }
+        keyPreviewView.setPreviewBackground(key.getMoreKeys() != null, i4);
+        // Bottom aligns with the key's bottom.
+        int yPos = (key.getY() + key.getHeight() - measuredHeight) + CoordinateUtils.y(originCoords);
+        placePreviewAt(keyPreviewView, i2, yPos, measuredWidth, measuredHeight);
+        keyPreviewView.setPivotX(measuredWidth / 2.0f);
+        keyPreviewView.setPivotY(measuredHeight);
+    }
+
+    /** Sizes by layout only when the size changes and positions by translation, so a move costs no layout pass. */
+    private static void placePreviewAt(View view, int x, int y, int width, int height) {
+        ViewGroup.LayoutParams params = view.getLayoutParams();
+        if (params instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) params;
+            if (margins.width != width || margins.height != height
+                    || margins.leftMargin != 0 || margins.topMargin != 0) {
+                margins.width = width;
+                margins.height = height;
+                margins.setMargins(0, 0, 0, 0);
+                view.setLayoutParams(margins);
+            }
+        }
+        view.setTranslationX(x);
+        view.setTranslationY(y);
+    }
+
+    /** @param withAnimation true to animate the show-up */
+    public void showKeyPreview(Key key, KeyPreviewView keyPreviewView, boolean withAnimation) {
+        if (!withAnimation) {
+            keyPreviewView.setPreviewShown(true);
+            this.mShowingKeyPreviewViews.put(key, keyPreviewView);
+        } else {
+            KeyPreviewAnimators aVar = new KeyPreviewAnimators(createShowUpAnimator(key, keyPreviewView), createDismissAnimator(key, keyPreviewView));
+            keyPreviewView.setTag(aVar);
+            aVar.startShowUp();
+        }
+    }
+
+    public Animator createShowUpAnimator(final Key key, final KeyPreviewView keyPreviewView) throws Resources.NotFoundException {
+        Animator animatorM7436b = this.mParams.createShowUpAnimator(keyPreviewView);
+        animatorM7436b.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationStart(Animator animator) {
+                KeyPreviewChoreographer.this.showKeyPreview(key, keyPreviewView, false);
+            }
+        });
+        return animatorM7436b;
+    }
+
+    private Animator createDismissAnimator(final Key key, KeyPreviewView keyPreviewView) throws Resources.NotFoundException {
+        Animator animatorM7438c = this.mParams.createDismissAnimator(keyPreviewView);
+        animatorM7438c.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animator) {
+                KeyPreviewChoreographer.this.dismissKeyPreview(key, false);
+            }
+        });
+        return animatorM7438c;
+    }
+
+    private static class KeyPreviewAnimators extends AnimatorListenerAdapter {
+
+        private final Animator mShowUpAnimator;
+
+        private final Animator mDismissAnimator;
+
+        public KeyPreviewAnimators(Animator animator, Animator dismissAnimator) {
+            this.mShowUpAnimator = animator;
+            this.mDismissAnimator = dismissAnimator;
+        }
+
+        public void startShowUp() {
+            this.mShowUpAnimator.start();
+        }
+
+        public void startDismiss() {
+            if (this.mShowUpAnimator.isRunning()) {
+                this.mShowUpAnimator.addListener(this);
+            } else {
+                this.mDismissAnimator.start();
+            }
+        }
+
+        @Override
+        public void onAnimationEnd(Animator animator) {
+            this.mDismissAnimator.start();
+        }
+    }
+}

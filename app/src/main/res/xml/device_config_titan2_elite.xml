@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Titan 2 Elite: Alt is ALT_LEFT, no Ctrl, Fn auto-repeats CTRL_LEFT with no key-up; unverified on a unit -->
+
+<device-input-config version="2.1" name="Unihertz Titan 2 Elite">
+
+    <device>
+        <match>
+            <!-- Same device and product as the Titan 2; the board (G72BoardV1) tells them apart -->
+            <build-device exact="Titan_2"/>
+            <board exact="G72BoardV1"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <keypad-layout>qwerty</keypad-layout>
+
+        <!-- Ctrl is one-shot here: Fn repeats must not latch sticky Ctrl (ControlModeController) -->
+        <quirk name="fn-no-key-up"/>
+
+        <!-- Unmeasured published range; matched by name, never by event node. No kdb-variant: swipe off -->
+        <touch-keypad range-x="1080" range-y="600" contacts="single" native-min-sdk="36" source="auto">
+            <input-device exact="touchPad"/>
+        </touch-keypad>
+
+        <input-mappings>
+            <alt-mappings>
+                <source>device_alt_mappings_titan2_elite</source>
+                <enabled>true</enabled>
+            </alt-mappings>
+
+            <scancode-mappings>
+
+                <key rawScanCode="253" role="BOARD_SYM"
+                     treatAs="KEYCODE_SYM" notes="Titan 2 Elite Sym key"/>
+
+                <!-- Fn (251) already arrives as CTRL_LEFT on this model; see the quirk above. -->
+                <key rawScanCode="251" role="MODIFIER"
+                     treatAs="KEYCODE_CTRL_LEFT" notes="Titan 2 Elite Fn key, Ctrl-like, no key-up"/>
+
+                <key rawScanCode="249" role="FUNCTION" notes="Titan 2 Elite Func1 (programmable)"/>
+                <key rawScanCode="250" role="FUNCTION" notes="Titan 2 Elite Func2 (programmable)"/>
+
+                <!-- Alt arrives as ALT_LEFT (scancode 56) on the Elite. -->
+                <key rawScanCode="56" role="MODIFIER"
+                     treatAs="KEYCODE_ALT_LEFT" notes="Titan 2 Elite Alt key (ALT_LEFT)"/>
+
+                <!-- Firmware swipe-left keys, assumed same as the Titan 2 -->
+                <key rawKeyCode="322" role="GESTURE_SWIPE_LEFT"
+                     notes="firmware swipe-left key (Android 15 firmware)"/>
+                <key rawKeyCode="404" role="GESTURE_SWIPE_LEFT"
+                     notes="firmware swipe-left key (Android 16 firmware)"/>
+
+            </scancode-mappings>
+        </input-mappings>
+
+        <settings-overrides>
+            <!-- The OEM Cursor assistant owns double-tap: default the slot to no action -->
+            <setting key="ckb_gesture_double_tap" type="string" default-value="none"/>
+        </settings-overrides>
+    </device>
+
+</device-input-config>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug only: the emulator poses as a KEY2 (CKB touch keypad, KEY2 warp) for gesture replay; select preloaded:device_config_w2emu -->
+
+<device-input-config version="2.1" name="W2 Emulator Replay (virtual KEY2)">
+
+    <device>
+        <match>
+            <!-- sdk_gphone64_arm64 reports Build.DEVICE emu64a -->
+            <build-device exact="emu64a"/>
+        </match>
+
+        <device-type>CKB</device-type>
+
+        <!-- Same warp as athena: replay traces are in sensor space (y 0..450) -->
+        <ckb-y-warp>0:0,450:324</ckb-y-warp>
+
+        <!-- No <keypad-type>: forcing the touch board makes the engine load qwerty_vkb instead of qwerty_pkb -->
+
+        <settings-overrides>
+            <setting key="type_by_swiping_ckb" type="boolean" read-only="false"/>
+        </settings-overrides>
+
+    </device>
+
+</device-input-config>

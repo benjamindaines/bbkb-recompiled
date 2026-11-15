@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <issue id="MissingTranslation" severity="ignore" />
+    <issue id="UnusedTranslation" severity="ignore" />
+    <issue id="ImpliedQuantity" severity="ignore" />
+    <issue id="MissingQuantity" severity="ignore" />
+    <issue id="UnusedQuantity" severity="ignore" />
+
+    <issue id="WrongConstant" severity="warning" />
+
+    <!-- UnusedResources: lint misses use from styles, Kotlin, getIdentifier() and Compose -->
+    <issue id="UnusedResources" severity="ignore" />
+
+    <issue id="Typos" severity="warning" />
+    <issue id="TypographyEllipsis" severity="warning" />
+
+    <!-- PrivateResource: false positives from Material library internals -->
+    <issue id="PrivateResource" severity="ignore" />
+
+    <issue id="GradleDependency" severity="warning" />
+    <issue id="OldTargetApi" severity="warning" />
+
+    <issue id="RtlHardcoded" severity="warning" />
+    <issue id="RtlSymmetry" severity="warning" />
+    <issue id="ContentDescription" severity="warning" />
+    <issue id="KeyboardInaccessibleWidget" severity="warning" />
+    <issue id="ClickableViewAccessibility" severity="warning" />
+
+    <issue id="VectorPath" severity="warning" />
+    <issue id="VectorRaster" severity="warning" />
+    <issue id="MonochromeLauncherIcon" severity="warning" />
+
+    <issue id="AutoboxingStateCreation" severity="warning" />
+    <issue id="StaticFieldLeak" severity="warning" />
+    <issue id="ObsoleteSdkInt" severity="warning" />
+    <issue id="NotifyDataSetChanged" severity="warning" />
+    <issue id="HandlerLeak" severity="warning" />
+    <issue id="Wakelock" severity="warning" />
+    <issue id="WakelockTimeout" severity="warning" />
+
+    <issue id="MergeRootFrame" severity="warning" />
+    <issue id="DisableBaselineAlignment" severity="warning" />
+    <issue id="InefficientWeight" severity="warning" />
+    <issue id="Overdraw" severity="warning" />
+    <issue id="UselessParent" severity="warning" />
+
+    <issue id="Autofill" severity="warning" />
+    <issue id="PluralsCandidate" severity="warning" />
+
+    <issue id="KtxExtensionAvailable" severity="warning" />
+    <issue id="ConstantLocale" severity="warning" />
+    <issue id="DefaultLocale" severity="warning" />
+    <issue id="RelativeOverlap" severity="warning" />
+    <issue id="VisibleForTests" severity="warning" />
+    <issue id="SwitchIntDef" severity="warning" />
+    <issue id="DiscouragedApi" severity="warning" />
+    <issue id="UsingOnClickInXml" severity="warning" />
+    <issue id="StringFormatCount" severity="warning" />
+    <issue id="DataExtractionRules" severity="warning" />
+    <issue id="AppBundleLocaleChanges" severity="warning" />
+    <issue id="MutableCollectionMutableState" severity="warning" />
+    <issue id="UnsafeOptInUsageWarning" severity="warning" />
+    <issue id="PrivateApi" severity="warning" />
+    <issue id="CustomViewStyleable" severity="warning" />
+    <issue id="CutPasteId" severity="warning" />
+    <issue id="DuplicateIncludedIds" severity="warning" />
+    <issue id="UnusedAttribute" severity="warning" />
+    <issue id="ApplySharedPref" severity="warning" />
+</lint>

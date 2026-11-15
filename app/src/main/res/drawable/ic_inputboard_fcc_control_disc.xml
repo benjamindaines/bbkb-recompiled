@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Disc of ic_inputboard_fcc_control, white for an SRC_IN tint; FccView layers the rings over it with their own tint -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="62dp"
+    android:height="62dp"
+    android:viewportWidth="186"
+    android:viewportHeight="186">
+  <path
+      android:pathData="M93,93m-89.56,0a89.56,89.56 0,1 1,179.13 0a89.56,89.56 0,1 1,-179.13 0"
+      android:fillColor="@android:color/white"/>
+</vector>

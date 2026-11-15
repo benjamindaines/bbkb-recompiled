@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path
+        name="dynamic"
+        path="dynamic/"/>
+    <files-path
+        name="work"
+        path="work/"/>
+    <files-path
+        name="nuance"
+        path="nuance/"/>
+    <!-- Device configs (imported and builder-written), shared by the builder -->
+    <files-path
+        name="device_configs"
+        path="device_configs/"/>
+    <!-- Imported letter layouts, shared by Custom physical layouts -->
+    <files-path
+        name="letter_layouts"
+        path="layouts/letter/"/>
+    <!-- Downloaded APKs: the installer needs a content:// URI (file:// refused since API 24) -->
+    <cache-path
+        name="downloads"
+        path="downloads/"/>
+</paths>

@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dev.bbkb.ime.keyboard.inputboard.emoji.EmojiPalettesView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/emoji_palettes_view"
+    android:layout_gravity="bottom"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_alignParentBottom="true"
+    android:layoutDirection="locale"
+    style="?attr/emojiPalettesViewStyle">
+
+    <FrameLayout
+        android:id="@+id/emoji_pager_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <!-- Always pages left to right (EmojiPagerAdapter.configure) -->
+        <androidx.viewpager2.widget.ViewPager2
+            android:id="@+id/emoji_keyboard_pager"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"/>
+
+        <dev.bbkb.ime.keyboard.inputboard.emoji.EmojiSearchOverlayView
+            android:id="@+id/emoji_search_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"/>
+
+    </FrameLayout>
+    <dev.bbkb.ime.keyboard.inputboard.emoji.EmojiCategoryPageIndicatorView
+        android:id="@+id/emoji_category_page_id_view"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"/>
+
+    <LinearLayout
+        android:id="@+id/emoji_tab_row"
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/config_suggestions_strip_height">
+        <!-- Synced by EmojiPalettesView (a tab spans pages); android:theme supplies the AppCompat theme the IME context lacks -->
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/emoji_category_tabhost"
+            style="@style/Widget.Design.TabLayout"
+            android:theme="@style/Theme.BlackberryKeyboard.IME"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="87.5"
+            android:background="@null"
+            android:focusable="false"
+            android:descendantFocusability="blocksDescendants"
+            android:overScrollMode="never"
+            app:tabMode="fixed"
+            app:tabGravity="fill"
+            app:tabIndicator="@null"
+            app:tabIndicatorHeight="0dp"
+            app:tabIndicatorAnimationDuration="0"
+            app:tabIconTint="@null"
+            app:tabRippleColor="@null"
+            app:tabPaddingStart="0dp"
+            app:tabPaddingEnd="0dp"
+            app:tabPaddingTop="0dp"
+            app:tabPaddingBottom="0dp"
+            app:tabMinWidth="0dp"
+            app:tabMaxWidth="0dp"/>
+        <include layout="@layout/suggestion_divider"/>
+        <ImageButton
+            android:id="@+id/emoji_keyboard_delete"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="12.5"
+            android:soundEffectsEnabled="false"
+            android:hapticFeedbackEnabled="false"/>
+    </LinearLayout>
+
+    <!-- Replaces the tab row while a physical-keyboard query is typed; same height and column split -->
+    <LinearLayout
+        android:id="@+id/emoji_search_field"
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/config_suggestions_strip_height"
+        android:visibility="gone">
+        <ImageView
+            android:id="@+id/emoji_search_icon"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="8.75"
+            android:scaleType="center"
+            android:src="@drawable/ic_key_search"
+            android:contentDescription="@null"/>
+        <TextView
+            android:id="@+id/emoji_search_query"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="78.75"
+            android:gravity="center_vertical|start"
+            android:paddingStart="4dp"
+            android:paddingEnd="8dp"
+            android:singleLine="true"
+            android:ellipsize="start"
+            android:textSize="@dimen/config_suggestion_text_size"
+            android:textDirection="locale"
+            android:contentDescription="@string/label_search_key"/>
+        <include layout="@layout/suggestion_divider"/>
+        <ImageButton
+            android:id="@+id/emoji_search_clear"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="12.5"
+            android:background="@android:color/transparent"
+            android:scaleType="center"
+            android:src="@drawable/ic_key_clear_search"
+            android:contentDescription="@string/cancel"
+            android:soundEffectsEnabled="false"
+            android:hapticFeedbackEnabled="false"/>
+    </LinearLayout>
+</dev.bbkb.ime.keyboard.inputboard.emoji.EmojiPalettesView>

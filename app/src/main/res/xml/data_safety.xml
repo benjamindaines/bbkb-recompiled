@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-safety>
+    <data-collected>
+        <data-type category="personal">
+            <purpose>app_functionality</purpose>
+            <shared>false</shared>
+            <collected>true</collected>
+            <ephemeral>false</ephemeral>
+        </data-type>
+
+        <data-type category="contacts">
+            <purpose>app_functionality</purpose>
+            <shared>false</shared>
+            <collected>false</collected>
+            <optional>true</optional>
+        </data-type>
+
+        <data-type category="audio">
+            <purpose>app_functionality</purpose>
+            <shared>false</shared>
+            <collected>false</collected>
+            <optional>true</optional>
+        </data-type>
+    </data-collected>
+
+    <security-practices>
+        <data-encrypted-in-transit>true</data-encrypted-in-transit>
+        <data-encrypted-at-rest>true</data-encrypted-at-rest>
+        <user-can-request-deletion>true</user-can-request-deletion>
+    </security-practices>
+</data-safety>

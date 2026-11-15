@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <LinearLayout
+        android:id="@+id/suggestion_content_layer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/hamburger_btn"
+            android:layout_width="@dimen/config_suggestion_half_hamburger_icon_width"
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:background="@android:color/transparent"
+            android:clickable="true"
+            android:scaleType="center"
+            android:src="@drawable/ic_auxbar_hamburger" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/suggestion_recycler"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/config_suggestions_strip_horizontal_margin"
+            android:layout_marginEnd="@dimen/config_suggestions_strip_horizontal_margin"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            tools:listitem="@layout/suggestion_word_item" />
+
+        <!-- Emoji slot outside the word slots so the three words keep their widths -->
+        <TextView
+            android:id="@+id/emoji_suggestion_slot"
+            android:layout_width="@dimen/config_suggestion_min_width_material"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:textSize="@dimen/config_suggestion_text_size"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/action_btn"
+            android:layout_width="@dimen/config_suggestion_half_hamburger_icon_width"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:background="@android:color/transparent"
+            android:clickable="true"
+            android:scaleType="center"
+            android:src="@drawable/ic_suggestions_more_arrow"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+    </FrameLayout>
+
+</merge>

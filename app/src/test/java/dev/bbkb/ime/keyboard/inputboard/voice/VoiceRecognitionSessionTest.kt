@@ -1,0 +1,697 @@
+package dev.bbkb.ime.keyboard.inputboard.voice
+
+import android.Manifest
+import android.app.Application
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
+import android.content.pm.ResolveInfo
+import android.content.pm.ServiceInfo
+import android.os.Bundle
+import android.os.Looper
+import android.speech.RecognitionService
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import androidx.test.core.app.ApplicationProvider
+import dev.bbkb.ime.R
+import dev.bbkb.ime.core.device.profile.DeviceProfile
+import dev.bbkb.ime.core.settings.PrefsManager
+import dev.bbkb.ime.core.settings.util.SettingsManager
+import dev.bbkb.ime.core.textinput.connection.EditorCapabilities
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyInt
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.inOrder
+import org.mockito.Mockito.never
+import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.`when`
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSpeechRecognizer
+import java.util.Locale
+
+/**
+ * How a dictation session ends, through the real [VoiceRecognitionManager] and Robolectric's
+ * [ShadowSpeechRecognizer]. Key case: with no recognition service the platform answers `startListening` with
+ * `ERROR_CLIENT` before `onReadyForSpeech`; the session must end and report STOPPED, not re-arm.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], manifest = Config.NONE)
+class VoiceRecognitionSessionTest {
+
+    private lateinit var context: Context
+    private lateinit var callback: VoiceInputController
+    private lateinit var manager: VoiceRecognitionManager
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        resetSettingsManager()
+        prefs().edit().clear().putBoolean("voice_input_use_input_language", false).commit()
+        DeviceProfile.clearPendingInitForTest()
+        DeviceProfile.initialize(null)
+        SettingsManager.initialize(context)
+        runCatching { SettingsManager.getInstance().unregisteredListener() }
+        SettingsManager.getInstance().loadSettings(
+            context, Locale.US, EditorCapabilities(null, false, context.packageName, Locale.US, false))
+        ShadowSpeechRecognizer.reset()
+        callback = mock(VoiceInputController::class.java)
+        manager = VoiceRecognitionManager(context, callback)
+    }
+
+    /** Hand SettingsManager back as it was found; see VoiceDictationOffensiveWordsTest. */
+    @After
+    fun tearDown() {
+        resetSettingsManager()
+        prefs().edit().clear().commit()
+        DeviceProfile.clearPendingInitForTest()
+        ShadowSpeechRecognizer.reset()
+    }
+
+    private fun resetSettingsManager() {
+        val settings = SettingsManager.getInstance()
+        runCatching { settings.unregisteredListener() }
+        listOf("settingsValues", "sharedPreferences", "deviceProfile", "listeners").forEach {
+            SettingsManager::class.java.getDeclaredField(it)
+                .apply { isAccessible = true }.set(settings, null)
+        }
+    }
+
+    private fun prefs() = PrefsManager.getPrefs(context)
+
+    private fun recognizer(): ShadowSpeechRecognizer {
+        val recognizer = ShadowSpeechRecognizer.getLatestSpeechRecognizer()
+        assertNotNull("no SpeechRecognizer was created", recognizer)
+        return shadowOf(recognizer)
+    }
+
+    private fun start() {
+        manager.startDictation()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun results(vararg texts: String) = Bundle().apply {
+        putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(*texts))
+    }
+
+    @Test
+    fun `dictation asks for the free-form language model`() {
+        start()
+        assertEquals(RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            recognizer().lastRecognizerIntent.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL))
+    }
+
+    @Test
+    fun `client error before ready is reported as no recognition service`() {
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_CLIENT)
+
+        verify(callback).onNoRecognitionService()
+        // ...and the session is over, not re-armed.
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        verify(callback).onStateChanged(VoiceRecognitionManager.Mode.NONE, VoiceRecognitionManager.STATE_STOPPED)
+        verify(callback, never()).onRecognitionError(anyInt())
+    }
+
+    /** The platform can answer twice; the second answer must not report (or re-arm) again. */
+    @Test
+    fun `a second client error after the session ended does nothing`() {
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_CLIENT)
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_CLIENT)
+
+        verify(callback, times(1)).onNoRecognitionService()
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+    }
+
+    /**
+     * Stop, then start again at once: the stop's own ERROR_CLIENT can land in the new session. The transient
+     * re-arm covers that, and it must not read as a missing service.
+     */
+    @Test
+    fun `a client error that may answer an earlier stop keeps the new session`() {
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+        manager.stopListening()
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_CLIENT)
+
+        verify(callback, never()).onNoRecognitionService()
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+    }
+
+    @Test
+    fun `client error after ready is not a missing service`() {
+        start()
+        recognizer().triggerOnReadyForSpeech(Bundle())
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_CLIENT)
+
+        verify(callback, never()).onNoRecognitionService()
+    }
+
+    @Test
+    fun `no match ends the session with a message`() {
+        start()
+        recognizer().triggerOnReadyForSpeech(Bundle())
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_NO_MATCH)
+
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        verify(callback).onRecognitionError(R.string.voice_status_no_match)
+        verify(callback).onDictationAbandoned()
+    }
+
+    @Test
+    fun `a network error ends the session with a message`() {
+        start()
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_NETWORK)
+
+        verify(callback).onRecognitionError(R.string.voice_status_network_error)
+        verify(callback, never()).onNoRecognitionService()
+    }
+
+    @Test
+    fun `partial results reach the callback`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello wor"))
+
+        verify(callback).onPartialResult("hello wor")
+    }
+
+    @Test
+    fun `the final result commits and does not abandon the partial`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello wor"))
+        recognizer().triggerOnResults(results("hello world"))
+
+        verify(callback).onDictationResult("hello world")
+        verify(callback, never()).onDictationAbandoned()
+    }
+
+    @Test
+    fun `an empty final result abandons the partial and commits nothing`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello"))
+        recognizer().triggerOnResults(results(""))
+
+        verify(callback, never()).onDictationResult(anyString())
+        verify(callback).onDictationAbandoned()
+    }
+
+    @Test
+    fun `a cancelled session abandons the partial and ignores late partials`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello"))
+
+        manager.stopListening()
+        recognizer().triggerOnPartialResults(results("hello there"))
+
+        verify(callback).onDictationAbandoned()
+        verify(callback, never()).onPartialResult("hello there")
+    }
+
+    private fun showPartialResults(show: Boolean) {
+        prefs().edit().putBoolean("voice_input_show_partial_results", show).commit()
+        SettingsManager.getInstance().loadSettings(
+            context, Locale.US, EditorCapabilities(null, false, context.packageName, Locale.US, false))
+    }
+
+    /** Off: partials stay out of the editor and the final result commits once. */
+    @Test
+    fun `with show words as you speak off partials are not forwarded and the final result still commits`() {
+        showPartialResults(false)
+        start()
+
+        recognizer().triggerOnPartialResults(results("hello"))
+        recognizer().triggerOnPartialResults(results("hello wor"))
+        recognizer().triggerOnResults(results("hello world"))
+
+        verify(callback, never()).onPartialResult(anyString())
+        verify(callback, times(1)).onDictationResult("hello world")
+        verify(callback, never()).onDictationAbandoned()
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+    }
+
+    /** The setting changes what reaches the editor, not what is asked of the recogniser. */
+    @Test
+    fun `with show words as you speak off the request is unchanged`() {
+        showPartialResults(false)
+        start()
+
+        assertTrue(recognizer().lastRecognizerIntent.getBooleanExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false))
+    }
+
+    /** Read per partial, not when the recogniser was built: the same manager follows the setting. */
+    @Test
+    fun `changing show words as you speak applies to the next dictation without a new recogniser`() {
+        start()
+        recognizer().triggerOnPartialResults(results("one"))
+        recognizer().triggerOnResults(results("one"))
+        verify(callback).onPartialResult("one")
+
+        showPartialResults(false)
+        start()
+        recognizer().triggerOnPartialResults(results("two"))
+        recognizer().triggerOnResults(results("two"))
+        verify(callback, never()).onPartialResult("two")
+        verify(callback).onDictationResult("two")
+
+        showPartialResults(true)
+        start()
+        recognizer().triggerOnPartialResults(results("three"))
+        verify(callback).onPartialResult("three")
+    }
+
+    private val sayboard = ComponentName("com.elishaazaria.sayboard", "com.elishaazaria.sayboard.recognition.RecognitionService")
+
+    private fun stopOnPause(on: Boolean) {
+        prefs().edit().putBoolean("voice_input_stop_on_pause", on).commit()
+        SettingsManager.getInstance().loadSettings(
+            context, Locale.US, EditorCapabilities(null, false, context.packageName, Locale.US, false))
+    }
+
+    private fun boardShowing() {
+        org.mockito.Mockito.`when`(callback.isViewShowing()).thenReturn(true)
+    }
+
+    private fun startsReported(): Int =
+        org.mockito.Mockito.mockingDetails(callback).invocations.count {
+            it.method.name == "onStateChanged" && it.arguments[1] == VoiceRecognitionManager.STATE_STARTED
+        }
+
+    @Test
+    fun `a stop keeps what was heard and the final result still commits`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello"))
+
+        manager.stopDictation()
+        verify(callback, never()).onDictationAbandoned()
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+
+        recognizer().triggerOnResults(results("hello world"))
+        verify(callback).onDictationResult("hello world")
+        verify(callback, never()).onDictationAbandoned()
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+    }
+
+    @Test
+    fun `a stop the recogniser never answers is cancelled after the grace period`() {
+        start()
+        recognizer().triggerOnPartialResults(results("hello"))
+        manager.stopDictation()
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(VoiceRecognitionManager.STOP_GRACE_MILLIS + 100))
+
+        verify(callback).onDictationAbandoned()
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+    }
+
+    @Test
+    fun `a stop with nothing said ends quietly`() {
+        start()
+        manager.stopDictation()
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_NO_MATCH)
+
+        verify(callback, never()).onRecognitionError(org.mockito.ArgumentMatchers.anyInt())
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+    }
+
+    @Test
+    fun `with stop on pause on the request carries a pause hint and no segmented session`() {
+        start()
+        val intent = recognizer().lastRecognizerIntent
+        assertEquals(VoiceRecognitionManager.PAUSE_SILENCE_MILLIS,
+            intent.getLongExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, -1L))
+        assertNull(intent.getStringExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION))
+        assertFalse(manager.isContinuous)
+    }
+
+    @Test
+    fun `with stop on pause off the request asks for a segmented session`() {
+        stopOnPause(false)
+        start()
+        val intent = recognizer().lastRecognizerIntent
+        assertEquals(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+            intent.getStringExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION))
+        assertEquals(VoiceRecognitionManager.CONTINUOUS_SILENCE_MILLIS,
+            intent.getLongExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, -1L))
+        assertTrue(manager.isContinuous)
+    }
+
+    @Test
+    fun `continuous dictation chains the next session when one ends on its own`() {
+        stopOnPause(false)
+        boardShowing()
+        start()
+        recognizer().triggerOnResults(results("one"))
+
+        verify(callback).onDictationResult("one")
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+        assertEquals(2, startsReported())
+    }
+
+    @Test
+    fun `continuous dictation does not chain after the user stops`() {
+        stopOnPause(false)
+        boardShowing()
+        start()
+        manager.stopDictation()
+        recognizer().triggerOnResults(results("one"))
+
+        verify(callback).onDictationResult("one")
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        assertEquals(1, startsReported())
+    }
+
+    @Test
+    fun `continuous dictation does not chain once the board is gone`() {
+        stopOnPause(false)
+        start()
+        recognizer().triggerOnResults(results("one"))
+
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        assertEquals(1, startsReported())
+    }
+
+    @Test
+    fun `segment results commit and the session goes on`() {
+        stopOnPause(false)
+        boardShowing()
+        start()
+        manager.listenerForTest().onSegmentResults(results("one"))
+        manager.listenerForTest().onSegmentResults(results("two"))
+
+        verify(callback).onDictationResult("one")
+        verify(callback).onDictationResult("two")
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+        assertEquals(1, startsReported())
+
+        manager.listenerForTest().onEndOfSegmentedSession()
+        // Heard something and was not stopped: chained like a plain session.
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+        assertEquals(2, startsReported())
+    }
+
+    @Test
+    fun `continuous dictation ends after the silent sessions cap`() {
+        stopOnPause(false)
+        boardShowing()
+        start()
+        repeat(VoiceRecognitionManager.MAX_EMPTY_SESSIONS - 1) {
+            recognizer().triggerOnError(SpeechRecognizer.ERROR_NO_MATCH)
+            assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+        }
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_NO_MATCH)
+
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        assertEquals(VoiceRecognitionManager.MAX_EMPTY_SESSIONS, startsReported())
+    }
+
+    @Test
+    fun `a cancel from the close path discards even in continuous mode`() {
+        stopOnPause(false)
+        boardShowing()
+        start()
+        recognizer().triggerOnPartialResults(results("hel"))
+        manager.stopListening()
+
+        verify(callback).onDictationAbandoned()
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        assertFalse(manager.isContinuous)
+    }
+
+    /** A recognition app the package query can see, labelled as its launcher would show it. */
+    private fun installRecognizer(component: ComponentName, label: String, microphoneGranted: Boolean = true) {
+        val app = ApplicationInfo().apply {
+            packageName = component.packageName
+            nonLocalizedLabel = label
+            targetSdkVersion = 34
+        }
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+            packageName = component.packageName
+            applicationInfo = app
+            // The app's own microphone grant, as PackageManager.checkPermission reports it.
+            requestedPermissions = arrayOf(Manifest.permission.RECORD_AUDIO)
+            requestedPermissionsFlags = intArrayOf(
+                if (microphoneGranted) PackageInfo.REQUESTED_PERMISSION_GRANTED else 0)
+        })
+        shadowOf(context.packageManager).addResolveInfoForIntent(
+            Intent(RecognitionService.SERVICE_INTERFACE),
+            ResolveInfo().apply {
+                serviceInfo = ServiceInfo().apply {
+                    packageName = component.packageName
+                    name = component.className
+                    applicationInfo = app
+                }
+            })
+    }
+
+    private fun chooseRecognizer(value: String) {
+        prefs().edit().putString("voice_input_recognizer", value).commit()
+    }
+
+    /** The component a recogniser was built for: null for the system default. */
+    private fun boundComponent(recognizer: SpeechRecognizer): ComponentName? =
+        SpeechRecognizer::class.java.getDeclaredField("mServiceComponent")
+            .apply { isAccessible = true }.get(recognizer) as ComponentName?
+
+    private fun isOnDevice(recognizer: SpeechRecognizer): Boolean =
+        SpeechRecognizer::class.java.getDeclaredField("mOnDevice")
+            .apply { isAccessible = true }.getBoolean(recognizer)
+
+    private fun latest(): SpeechRecognizer = ShadowSpeechRecognizer.getLatestSpeechRecognizer()!!
+
+    private fun grantMicrophone(granted: Boolean) {
+        val app = shadowOf(context as Application)
+        if (granted) app.grantPermissions(Manifest.permission.RECORD_AUDIO)
+        else app.denyPermissions(Manifest.permission.RECORD_AUDIO)
+    }
+
+    @Test
+    fun `with the setting empty the system default recogniser is used`() {
+        start()
+
+        assertNull(boundComponent(latest()))
+        assertFalse(isOnDevice(latest()))
+    }
+
+    @Test
+    fun `a chosen installed app is bound by its component`() {
+        installRecognizer(sayboard, "Sayboard")
+        chooseRecognizer(sayboard.flattenToString())
+
+        start()
+
+        assertEquals(sayboard, boundComponent(latest()))
+        assertEquals("the request is the same whichever service answers it",
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            recognizer().lastRecognizerIntent.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL))
+    }
+
+    /** No keyboard restart: the next tap after a change in settings uses the new recogniser. */
+    @Test
+    fun `changing the setting rebuilds the recogniser before the next dictation`() {
+        installRecognizer(sayboard, "Sayboard")
+        start()
+        val first = latest()
+        recognizer().triggerOnResults(results("one"))
+
+        chooseRecognizer(sayboard.flattenToString())
+        start()
+
+        val second = latest()
+        assertTrue("a new recogniser is built", second !== first)
+        assertTrue("the old one is destroyed, not leaked", shadowOf(first).isDestroyed)
+        assertEquals(sayboard, boundComponent(second))
+
+        recognizer().triggerOnResults(results("two"))
+        verify(callback).onDictationResult("two")
+
+        chooseRecognizer("")
+        start()
+        assertTrue(shadowOf(second).isDestroyed)
+        assertNull("back to the system default", boundComponent(latest()))
+    }
+
+    @Test
+    fun `an unchanged setting keeps the same recogniser`() {
+        start()
+        val first = latest()
+        recognizer().triggerOnResults(results("one"))
+
+        start()
+
+        assertTrue(latest() === first)
+        assertFalse(shadowOf(first).isDestroyed)
+    }
+
+    /**
+     * Uninstalled since it was chosen: falls back to the default, which says "no service" if it is gone
+     * too.
+     */
+    @Test
+    fun `a chosen app that is no longer installed falls back to the system default`() {
+        chooseRecognizer(sayboard.flattenToString())
+
+        start()
+
+        assertNull(boundComponent(latest()))
+        assertFalse(isOnDevice(latest()))
+    }
+
+    @Test
+    fun `the on-device recogniser is used where the phone has one`() {
+        ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(true)
+        chooseRecognizer("ondevice")
+
+        start()
+
+        assertTrue(isOnDevice(latest()))
+    }
+
+    @Test
+    fun `without an on-device recogniser that choice falls back to the system default`() {
+        ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(false)
+        chooseRecognizer("ondevice")
+
+        start()
+
+        assertFalse(isOnDevice(latest()))
+        assertNull(boundComponent(latest()))
+    }
+
+    @Test
+    fun `a permission error from a chosen app without the microphone names that app`() {
+        installRecognizer(sayboard, "Sayboard", microphoneGranted = false)
+        chooseRecognizer(sayboard.flattenToString())
+        grantMicrophone(true)
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+
+        verify(callback).onRecognizerNeedsPermission("Sayboard")
+        verify(callback, never()).onRecognizerRefused(anyString())
+        verify(callback, never()).onPermissionNeeded()
+    }
+
+    /** The chosen app holds the microphone, so its permission error means it refused the keyboard. */
+    @Test
+    fun `a permission error from a chosen app that holds the microphone says it refused`() {
+        installRecognizer(sayboard, "Sayboard", microphoneGranted = true)
+        chooseRecognizer(sayboard.flattenToString())
+        grantMicrophone(true)
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+
+        verify(callback).onRecognizerRefused("Sayboard")
+        verify(callback, never()).onRecognizerNeedsPermission(anyString())
+        verify(callback, never()).onPermissionNeeded()
+        // The session is over and the board is told so, not left listening.
+        assertEquals(VoiceRecognitionManager.Mode.NONE, manager.mode)
+        val order = inOrder(callback)
+        order.verify(callback).onStateChanged(VoiceRecognitionManager.Mode.NONE, VoiceRecognitionManager.STATE_STOPPED)
+        // ...and STOPPED comes first, so the idle text it sets does not cover the message.
+        order.verify(callback).onRecognizerRefused("Sayboard")
+    }
+
+    @Test
+    fun `with the system default a permission error still asks for ours`() {
+        grantMicrophone(true)
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+
+        verify(callback).onPermissionNeeded()
+        verify(callback, never()).onRecognizerNeedsPermission(anyString())
+        verify(callback, never()).onRecognizerRefused(anyString())
+    }
+
+    /** The service checks its caller as well as itself: our own permission comes first. */
+    @Test
+    fun `a chosen app is not blamed while the keyboard lacks the permission itself`() {
+        installRecognizer(sayboard, "Sayboard")
+        chooseRecognizer(sayboard.flattenToString())
+        grantMicrophone(false)
+        `when`(callback.isViewShowing).thenReturn(true)
+        start()
+
+        recognizer().triggerOnError(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+
+        verify(callback).onPermissionNeeded()
+        verify(callback, never()).onRecognizerNeedsPermission(anyString())
+        verify(callback, never()).onRecognizerRefused(anyString())
+    }
+
+    private fun idleFor(millis: Long) =
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(millis))
+
+    /**
+     * The recogniser is destroyed a while after the dictation (it holds its service connection); the next
+     * one builds anew.
+     */
+    @Test
+    fun `the recogniser is destroyed once a dictation has been over for a while`() {
+        start()
+        val first = latest()
+        recognizer().triggerOnResults(results("one"))
+        verify(callback).onDictationResult("one")
+        assertFalse(shadowOf(first).isDestroyed)
+
+        idleFor(VoiceRecognitionManager.IDLE_RELEASE_MILLIS + 100)
+        assertTrue("released when idle", shadowOf(first).isDestroyed)
+
+        start()
+        val second = latest()
+        assertTrue("the next dictation builds a new one", second !== first)
+        recognizer().triggerOnResults(results("two"))
+        verify(callback).onDictationResult("two")
+    }
+
+    @Test
+    fun `a dictation that is still running keeps its recogniser`() {
+        start()
+        val first = latest()
+
+        idleFor(VoiceRecognitionManager.IDLE_RELEASE_MILLIS * 3)
+        assertFalse("never during a session", shadowOf(first).isDestroyed)
+        assertEquals(VoiceRecognitionManager.Mode.DICTATION, manager.mode)
+
+        recognizer().triggerOnResults(results("late"))
+        verify(callback).onDictationResult("late")
+        idleFor(VoiceRecognitionManager.IDLE_RELEASE_MILLIS + 100)
+        assertTrue(shadowOf(first).isDestroyed)
+    }
+
+    @Test
+    fun `a destroyed manager builds no recogniser again`() {
+        start()
+        recognizer().triggerOnResults(results("one"))
+        manager.destroy()
+        val last = latest()
+
+        start()
+        assertTrue("no new recogniser after destroy", latest() === last)
+    }
+}

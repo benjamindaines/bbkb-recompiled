@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unihertz Titan Pocket: "aw9523-key" keypad, "mtk-pad" touch; from stock files, unverified on a unit -->
+
+<device-input-config version="2.1" name="Unihertz Titan Pocket">
+
+    <device>
+        <match>
+            <model exact="Titan Pocket"/>
+            <device-name exact="aw9523-key"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <keypad-layout>qwerty</keypad-layout>
+
+        <!-- Unverified range (about 720x360). No kdb-variant: swipe off -->
+        <touch-keypad range-x="720" range-y="360" contacts="single" source="auto">
+            <input-device exact="mtk-pad"/>
+        </touch-keypad>
+
+        <input-mappings>
+            <alt-mappings>
+                <source>device_alt_mappings_titan_pocket</source>
+                <enabled>true</enabled>
+            </alt-mappings>
+
+            <scancode-mappings>
+
+                <key rawScanCode="127" role="BOARD_SYM"
+                     treatAs="KEYCODE_SYM" notes="Titan Pocket Sym key (KEY_COMPOSE)"/>
+
+                <!-- F13 (scancode 183) is the programmable FUNC1 key -->
+                <key rawScanCode="183" role="FUNCTION" notes="Titan Pocket FUNC1 (F13)"/>
+
+                <!-- No board, so not read as Minimal Phone Sym/Emoji -->
+                <key rawScanCode="249" role="FUNCTION" notes="Titan Pocket vendor key 249"/>
+                <key rawScanCode="250" role="FUNCTION" notes="Titan Pocket vendor key 250"/>
+
+                <key rawScanCode="100" role="MODIFIER"
+                     treatAs="KEYCODE_ALT_RIGHT" notes="Titan Pocket Alt key (RIGHTALT)"/>
+
+            </scancode-mappings>
+        </input-mappings>
+    </device>
+
+</device-input-config>

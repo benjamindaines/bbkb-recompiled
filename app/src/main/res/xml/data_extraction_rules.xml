@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ allowlist, in sync with backupscheme.xml (BackupRulesTest). Unlisted files/nuance (the DLM) must never cross devices -->
+<!-- Add only <include>s: lint rejects an <exclude> outside the allowlist. The prefs file name follows the applicationId (PackageIdentityTest) -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/personal_words"/>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/substitutions"/>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/deleted_substitutions"/>
+        <include
+            domain="sharedpref"
+            path="dev.bbkb.ime_preferences.xml"/>
+        <include
+            domain="sharedpref"
+            path="shared_pref.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/personal_words"/>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/substitutions"/>
+        <include
+            domain="file"
+            path="dev.bbkb.ime.basl.pdu/deleted_substitutions"/>
+        <include
+            domain="sharedpref"
+            path="dev.bbkb.ime_preferences.xml"/>
+        <include
+            domain="sharedpref"
+            path="shared_pref.xml"/>
+    </device-transfer>
+</data-extraction-rules>

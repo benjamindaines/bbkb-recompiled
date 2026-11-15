@@ -1,0 +1,153 @@
+package dev.bbkb.ime.keyboard.inputboard.clipboard;
+
+import android.content.Context;
+import android.view.View;
+
+import dev.bbkb.ime.R;
+import dev.bbkb.ime.core.BlackBerryIME;
+import dev.bbkb.ime.core.textinput.InputMethodHelper;
+import dev.bbkb.ime.core.shared.Logger;
+import dev.bbkb.ime.keyboard.inputboard.AbstractBoardController;
+
+
+public class ClipboardController extends AbstractBoardController<ClipboardController.Listener>
+        implements ClipboardView.OnPasteListener {
+
+    private static final String TAG = "ClipboardController";
+
+    public static final int KEY_CODE = -25;
+
+
+    private ClipboardView mClipboardView;
+
+    private ClipboardHistoryManager mHistoryManager;
+
+    
+    public interface Listener {
+        void onClipboardShown();
+
+        void onClipboardHidden();
+    }
+
+    /** @param listener receives clipboard shown and hidden events */
+    public ClipboardController(BlackBerryIME blackBerryIME, Listener listener) {
+        super(KEY_CODE, blackBerryIME, listener);
+        // The application context, not the service: the system holds the primary-clip listener's
+        // binder stub until its own GC, which would pin every destroyed IME instance.
+        Context appContext = blackBerryIME.getApplicationContext();
+        this.mHistoryManager = new ClipboardHistoryManager(appContext != null ? appContext : blackBerryIME);
+    }
+
+    public void bindView(View view) {
+        ClipboardView clipboardView = this.mClipboardView;
+        if (clipboardView != null) {
+            clipboardView.unregisteredListener();
+            this.mClipboardView.setListener(null);
+            // The old view's link-preview fetches must not outlive it.
+            this.mClipboardView.release();
+        }
+        this.mClipboardView = (ClipboardView) view.findViewById(R.id.inputboard_clipboard_view);
+        ClipboardView clipboardView2 = this.mClipboardView;
+        if (clipboardView2 != null) {
+            clipboardView2.setListener(this);
+            this.mClipboardView.initialize(this.mHistoryManager, this.ime);
+        }
+    }
+
+    public void dismiss() {
+        hideClipboard();
+    }
+
+    /** @param noPersonalizedLearning true if the focused field is incognito (stop capturing clips) */
+    public void setNoPersonalizedLearning(boolean noPersonalizedLearning) {
+        if (hasHistoryManager()) {
+            this.mHistoryManager.setNoPersonalizedLearning(noPersonalizedLearning);
+        }
+    }
+
+    /** Expire clips past retention (and load, once unlocked). */
+    public void onStartInput() {
+        if (hasHistoryManager()) {
+            this.mHistoryManager.prune();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (hasView()) {
+            this.mClipboardView.unregisteredListener();
+            this.mClipboardView.setListener(null);
+            this.mClipboardView.release();
+            this.mClipboardView = null;
+        }
+        if (hasHistoryManager()) {
+            this.mHistoryManager.release();
+        }
+    }
+
+    @Override
+    protected View peekBoardView() {
+        return this.mClipboardView;
+    }
+
+    private boolean hasHistoryManager() {
+        return this.mHistoryManager != null;
+    }
+
+    public boolean hasView() {
+        return this.mClipboardView != null;
+    }
+
+    public boolean isClipboardShowing() {
+        return hasView() && (this.mClipboardView.isVisible() || this.mClipboardView.isOpening());
+    }
+
+    public void showClipboard() {
+        if (!hasView() || this.mClipboardView.isVisible()) {
+            return;
+        }
+        Logger.debug(TAG, "Showing Clipboard");
+        this.mClipboardView.setOpening(true);
+        this.listener.onClipboardShown();
+        this.mClipboardView.show();
+        this.mClipboardView.setOpening(false);
+        this.mClipboardView.getContext();
+    }
+
+    public void hideClipboard() {
+        if (hasView() && this.mClipboardView.isVisible()) {
+            Logger.debug(TAG, "Hiding Clipboard");
+            this.mClipboardView.hide();
+            this.listener.onClipboardHidden();
+        }
+    }
+
+    /** The system clipboard is not touched, so pasting never replaces what the user last copied. */
+    @Override
+    public void onPaste(CharSequence text) {
+        if (this.ime != null) {
+            this.ime.getInputLogic().pasteText(text);
+        }
+    }
+
+    @Override
+    protected void onHide() {
+        hideClipboard();
+    }
+
+    @Override
+    protected void onShow() {
+        showClipboard();
+    }
+
+    @Override
+    public boolean isShowing() {
+        return isClipboardShowing();
+    }
+
+    @Override
+    public boolean isEnabled() {
+        InputMethodHelper inputMethodHelper = InputMethodHelper.getInstance();
+        return inputMethodHelper != null && inputMethodHelper.isDeviceUnlocked();
+    }
+}

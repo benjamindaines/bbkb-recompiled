@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <supports-screens
+        android:normalScreens="true"
+        android:largeScreens="true"/>
+
+    <queries>
+        <intent>
+            <action android:name="android.settings.INPUT_METHOD_SETTINGS"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.SETTINGS"/>
+        </intent>
+        <!-- Speech recognizers: undeclared, isRecognitionAvailable() answers false on API 30+ -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK"/>
+            <data android:mimeType="vnd.android.cursor.dir/contact"/>
+        </intent>
+        <!-- User dictionary provider: undeclared on API 30+, query() returns null and writes throw -->
+        <provider android:authorities="user_dictionary"/>
+        <!-- Shizuku manager: lets getPackageInfo() tell NOT_INSTALLED from NOT_RUNNING -->
+        <package android:name="moe.shizuku.privileged.api"/>
+    </queries>
+
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <uses-permission android:name="android.permission.READ_USER_DICTIONARY"/>
+    <uses-permission android:name="android.permission.WRITE_USER_DICTIONARY"/>
+    <!-- Update manifest, APK and language pack downloads; network state lets ManifestSource use its cache -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Offer a downloaded APK to the system installer (user confirms); notify about updates on API 33+ -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <application
+        android:label="@string/english_ime_name"
+        android:icon="@mipmap/ic_launcher_round"
+        android:name="dev.bbkb.ime.core.ImeApplication"
+        android:backupAgent="dev.bbkb.ime.core.BackupAgent"
+        android:allowBackup="true"
+        android:killAfterRestore="true"
+        android:supportsRtl="true"
+        android:fullBackupContent="@xml/backupscheme"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true"
+        android:appCategory="productivity"
+        tools:targetApi="28"
+        android:localeConfig="@xml/locales_config"
+        android:enableOnBackInvokedCallback="true">
+        <meta-data
+            android:name="com.google.android.backup.api_key"
+            android:value="AEdPqrEAAAAICZ3rjqOf5i6g5rK4OmzobiG4DttMVbYvlWjK1g"/>
+
+        <meta-data
+            android:name="android.privacy.DATA_SAFETY"
+            android:resource="@xml/data_safety"/>
+
+        <meta-data
+            android:name="android.privacy.RESPECTS_USER_PRIVACY"
+            android:value="true"/>
+        <service
+            android:label="@string/english_ime_name"
+            android:name="dev.bbkb.ime.core.BlackBerryIME"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method"/>
+        </service>
+
+        <!-- Catches Emoji/SYM/Voice keys the system swallows before the IME on third-party keypad phones -->
+        <service
+            android:name="dev.bbkb.ime.core.device.interceptor.KeyInterceptorService"
+            android:label="@string/key_interceptor_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/key_interceptor_service_config"/>
+        </service>
+        
+        <service
+            android:label="@string/spell_checker_service_name"
+            android:name="dev.bbkb.ime.core.spellcheck.AndroidSpellCheckerService"
+            android:permission="android.permission.BIND_TEXT_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.textservice.SpellCheckerService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.view.textservice.scs"
+                android:resource="@xml/spellchecker"/>
+        </service>
+        <!-- Daily update check; the job persists across reboot, so RECEIVE_BOOT_COMPLETED is needed for it too -->
+        <service
+            android:name="dev.bbkb.ime.core.update.UpdateJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
+        <receiver
+            android:name="dev.bbkb.ime.core.SystemBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.USER_INITIALIZE"/>
+                <action android:name="android.intent.action.LOCALE_CHANGED"/>
+                <action android:name="dev.bbkb.ime.languagepack.UPDATE_NOW"/>
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name="dev.bbkb.ime.core.settings.ComposeSettingsActivity"
+            android:label="@string/english_ime_settings"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Opened from the accessibility service settings; redirects to Advanced -->
+        <activity
+            android:name="dev.bbkb.ime.core.settings.KeyInterceptorSettingsActivity"
+            android:label="@string/key_interceptor_service_label"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+            android:exported="true"/>
+
+        <activity
+            android:name="dev.bbkb.ime.core.settings.SpellCheckerComposeActivity"
+            android:label="@string/android_spell_checker_settings"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.textservice.SpellCheckerService.SETTINGS_ACTION"/>
+            </intent-filter>
+        </activity>
+        <!-- SUGGESTION_PICKED comes from the editor app's process, so it must be exported; SuggestionPickLearner ignores words it did not offer -->
+        <receiver
+            android:name="dev.bbkb.ime.core.suggestion.SuggestionSpanReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.text.style.SUGGESTION_PICKED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:label="@string/android_spell_checker_settings"
+            android:name="dev.bbkb.ime.core.settings.DeviceResetReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="tcl.intent.action.LAUNCH_DEVICE_RESET"/>
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:label="@string/rationale_dialog_header"
+            android:name="dev.bbkb.ime.core.permissions.PermissionActivity"
+            android:exported="false"
+            android:taskAffinity=""/>
+        <activity
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:name="dev.bbkb.ime.keyboard.inputboard.voice.VoiceInputDialog"
+            android:exported="false"/>
+        <activity
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:name="dev.bbkb.ime.personaldictionary.AddWordDialog"
+            android:windowSoftInputMode="stateVisible|adjustResize"
+            android:exported="false"/>
+        <!-- Shizuku binder handoff: must be exported, not multiprocess, authority ${applicationId}.shizuku -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"/>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:exported="false"
+            android:authorities="${applicationId}.fileprovider"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
+
+        <!-- EmojiCompat is unused; removed so it never loads its font into the keyboard process -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove"/>
+        </provider>
+    </application>
+</manifest>

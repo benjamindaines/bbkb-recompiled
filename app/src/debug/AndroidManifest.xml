@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+
+        <!-- Shizuku touch probe: logs decoded touches (tag ShizukuTouch); DUMP limits it to adb shell, send with -p ${applicationId} -->
+        <receiver
+            android:name="dev.bbkb.ime.core.device.touch.shizuku.ShizukuTouchProbeReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="${applicationId}.SHIZUKU_TOUCH_PROBE"/>
+                <action android:name="${applicationId}.SHIZUKU_TOUCH_DEVICES"/>
+                <action android:name="${applicationId}.SHIZUKU_TOUCH_STOP"/>
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

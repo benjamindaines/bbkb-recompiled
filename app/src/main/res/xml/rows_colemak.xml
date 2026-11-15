@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-kept (rowkeys_colemak1..3 are generated); rows template "spanish": the middle row is ten 10%p keys, not nine between spacers -->
+<merge xmlns:latin="http://schemas.android.com/apk/res-auto">
+    <include latin:keyboardLayout="@xml/key_styles_common"/>
+    <include latin:keyboardLayout="@xml/row_password_numbers"/>
+    <Row latin:keyWidth="10%p">
+        <include latin:keyboardLayout="@xml/rowkeys_colemak1"/>
+    </Row>
+    <Row latin:keyWidth="10%p">
+        <include latin:keyboardLayout="@xml/rowkeys_colemak2"/>
+    </Row>
+    <Row latin:keyWidth="10%p">
+        <Key
+            latin:keyStyle="shiftKeyStyle"
+            latin:keyWidth="15%p"/>
+        <include latin:keyboardLayout="@xml/rowkeys_colemak3"/>
+        <Key
+            latin:keyStyle="deleteKeyStyle"
+            latin:keyWidth="fillRight"/>
+    </Row>
+    <include latin:keyboardLayout="@xml/row_qwerty4"/>
+</merge>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- android:id/icon is the id TabLayout tints; inflated without a parent so the tab gives it its default size -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/icon"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:scaleType="center"
+    android:soundEffectsEnabled="false"
+    android:hapticFeedbackEnabled="false"
+    android:contentDescription="@null"/>

@@ -1,0 +1,177 @@
+package dev.bbkb.ime.core.settings.editor
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import dev.bbkb.ime.R
+import dev.bbkb.ime.core.settings.data.DictionaryEntry
+import dev.bbkb.ime.core.settings.screens.ShortcutsSpec
+import dev.bbkb.ime.core.settings.screens.UserDictionarySpec
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * The user-visible English wording of the two dictionary editors, read through their specs. Many
+ * strings appear only after a dialog, which no unit test can drive, so they are reached here
+ * through the resources each spec names.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class EntryListSpecTest {
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun text(id: Int, vararg args: Any) = context.getString(id, *args)
+    private fun count(id: Int, n: Int, vararg args: Any) =
+        context.resources.getQuantityString(id, n, *(if (args.isEmpty()) arrayOf<Any>(n) else args))
+
+    private fun entry(word: String, shortcut: String?, locale: String = "en_US") =
+        DictionaryEntry(word = word, shortcut = shortcut, locale = locale)
+
+    @Test
+    fun theShortcutsEditorWordsItselfAsItAlwaysDid() {
+        val spec = ShortcutsSpec
+        assertEquals("Text shortcuts", text(spec.title))
+        assertEquals("0 shortcuts", count(spec.count, 0))
+        assertEquals("one is singular", "1 shortcut", count(spec.count, 1))
+        assertEquals("3 shortcuts", count(spec.count, 3))
+        assertEquals("1 of 3 shortcuts", count(spec.searchCount, 3, 1, 3))
+        assertEquals("Search shortcuts", text(spec.searchHint))
+        assertEquals("Add shortcut", text(spec.add))
+        assertEquals("Edit shortcut", text(spec.edit))
+        assertEquals("Shortcut added", text(spec.added))
+        assertEquals("Failed to add shortcut", text(spec.addFailed))
+        assertEquals("Shortcut updated", text(spec.updated))
+        assertEquals("Failed to update shortcut", text(spec.updateFailed))
+        assertEquals("Deleted 1 shortcut", count(spec.deleted, 1))
+        assertEquals("Deleted 2 shortcuts", count(spec.deleted, 2))
+        assertEquals("Failed to delete shortcut", text(spec.deleteFailed))
+        assertEquals("Couldn't bring back every shortcut", text(spec.restoreFailed))
+        assertEquals("No text shortcuts", text(spec.emptyTitle))
+        assertEquals("Tap Add shortcut to create shortcuts that expand to phrases", text(spec.emptyHint))
+        assertEquals(
+            "Failed to load shortcuts: store unavailable",
+            text(spec.loadFailed, "store unavailable")
+        )
+        assertEquals(
+            "an exception with no message still produced this wording",
+            "Failed to load shortcuts: null",
+            text(spec.loadFailed, "null")
+        )
+    }
+
+    @Test
+    fun theShortcutsEditorRefusesAShortcutContainingASpace() {
+        assertEquals(
+            "Shortcut cannot contain spaces",
+            ShortcutsSpec.validate(entry("Best regards", "my sig"))?.let { text(it) }
+        )
+        assertNull(ShortcutsSpec.validate(entry("Best regards", "sig")))
+        assertNull("a personal word has no shortcut to check", ShortcutsSpec.validate(entry("Landrum", null)))
+    }
+
+    @Test
+    fun theShortcutsEditorOwnsSubstitutionsAndKeysThemByShortcutAndLocale() {
+        assertTrue(ShortcutsSpec.belongsHere(entry("Best regards", "sig")))
+        assertFalse(ShortcutsSpec.belongsHere(entry("Landrum", null)))
+        assertFalse(ShortcutsSpec.belongsHere(entry("Landrum", "Landrum")))
+
+        assertEquals("sig_en_US", ShortcutsSpec.identity(entry("Best regards", "sig")))
+        assertEquals("a sheet is headed by the shortcut", "sig", ShortcutsSpec.label(entry("Best regards", "sig")))
+        assertEquals("sig", ShortcutsSpec.sortKey(entry("Best regards", "sig")))
+        assertEquals(
+            "sorting is case-insensitive",
+            "sig", ShortcutsSpec.sortKey(entry("Best regards", "SIG"))
+        )
+    }
+
+    @Test
+    fun theShortcutsSearchLooksAtBothSides() {
+        val e = entry("Best regards", "sig")
+        assertTrue(ShortcutsSpec.matches(e, "SIG"))
+        assertTrue(ShortcutsSpec.matches(e, "regards"))
+        assertFalse(ShortcutsSpec.matches(e, "zzz"))
+    }
+
+    @Test
+    fun theDictionaryEditorWordsItselfAsItAlwaysDid() {
+        val spec = UserDictionarySpec
+        assertEquals("0 words", count(spec.count, 0))
+        assertEquals("1 word", count(spec.count, 1))
+        assertEquals("3 words", count(spec.count, 3))
+        assertEquals("2 of 6 words", count(spec.searchCount, 6, 2, 6))
+        assertEquals("Search words", text(spec.searchHint))
+        assertEquals("Add word", text(spec.add))
+        assertEquals("Edit word", text(spec.edit))
+        assertEquals("Word added", text(spec.added))
+        assertEquals("Failed to add word", text(spec.addFailed))
+        assertEquals("Word updated", text(spec.updated))
+        assertEquals("Failed to update word", text(spec.updateFailed))
+        assertEquals("Deleted 1 word", count(spec.deleted, 1))
+        assertEquals("Deleted 4 words", count(spec.deleted, 4))
+        assertEquals("Failed to delete word", text(spec.deleteFailed))
+        assertEquals("No words yet", text(spec.emptyTitle))
+        assertEquals("Tap Add word to add a word to your dictionary", text(spec.emptyHint))
+        assertEquals(
+            "Failed to load dictionary: store unavailable",
+            text(spec.loadFailed, "store unavailable")
+        )
+    }
+
+    @Test
+    fun theDictionaryEditorNeverRefusesAWord() {
+        // Only the shortcuts editor validates.
+        assertNull(UserDictionarySpec.validate(entry("Landrum", null)))
+        assertNull(UserDictionarySpec.validate(entry("two words", null)))
+    }
+
+    @Test
+    fun theDictionaryEditorOwnsPersonalWordsAndKeysThemByWordAndLocale() {
+        assertTrue(UserDictionarySpec.belongsHere(entry("Landrum", null)))
+        assertTrue(
+            "the stored form of a personal word is a substitution of the word to itself",
+            UserDictionarySpec.belongsHere(entry("Landrum", "Landrum"))
+        )
+        assertFalse(UserDictionarySpec.belongsHere(entry("Best regards", "sig")))
+
+        assertEquals("Landrum_en_US", UserDictionarySpec.identity(entry("Landrum", null)))
+        assertEquals("Landrum", UserDictionarySpec.label(entry("Landrum", null)))
+        assertEquals("landrum", UserDictionarySpec.sortKey(entry("Landrum", null)))
+    }
+
+    @Test
+    fun theDictionarySearchLooksAtTheWordOnly() {
+        val e = entry("Landrum", null)
+        assertTrue(UserDictionarySpec.matches(e, "LAND"))
+        assertFalse(UserDictionarySpec.matches(e, "zzz"))
+    }
+
+    @Test
+    fun theTwoEditorsPartitionTheStoreBetweenThem() {
+        // Every entry belongs to exactly one of them, which is what lets both read the same
+        // repository and show disjoint lists.
+        listOf(
+            entry("Best regards", "sig"),
+            entry("Landrum", null),
+            entry("Landrum", "Landrum"),
+            entry("iPhone", ""),
+        ).forEach {
+            assertTrue(
+                "${it.word}/${it.shortcut} belongs to neither or both editors",
+                ShortcutsSpec.belongsHere(it) != UserDictionarySpec.belongsHere(it)
+            )
+        }
+    }
+
+    /** The settings title and the Learning screen's row are one string, so they agree everywhere. */
+    @Test
+    fun theTitlesAreTheLearningScreensRows() {
+        assertEquals(R.string.settings_dict_text_shortcuts_title, ShortcutsSpec.title)
+        assertEquals(R.string.settings_user_dictionary_screen_title, UserDictionarySpec.title)
+    }
+}

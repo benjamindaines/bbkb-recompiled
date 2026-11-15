@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Dark status bar background, so the icons drawn on it must be light. -->
+    <bool name="settings_light_status_bar">false</bool>
+</resources>

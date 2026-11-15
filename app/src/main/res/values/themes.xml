@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base context of the IME service: must define textColorPrimary or it propagates as white -->
+    <style name="Theme.BlackberryKeyboard.IME" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/m3_primary</item>
+        <item name="colorOnPrimary">@color/m3_on_primary</item>
+        <item name="colorPrimaryContainer">@color/m3_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/m3_on_primary_container</item>
+        
+        <item name="colorSecondary">@color/m3_secondary</item>
+        <item name="colorOnSecondary">@color/m3_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/m3_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/m3_on_secondary_container</item>
+        
+        <item name="colorSurface">@color/m3_surface</item>
+        <item name="colorOnSurface">@color/m3_on_surface</item>
+        <item name="colorSurfaceVariant">@color/m3_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/m3_on_surface_variant</item>
+        
+        <item name="colorTertiary">@color/m3_tertiary</item>
+        <item name="colorOnTertiary">@color/m3_on_tertiary</item>
+        <item name="colorTertiaryContainer">@color/m3_tertiary_container</item>
+        <item name="colorOnTertiaryContainer">@color/m3_on_tertiary_container</item>
+        
+        <item name="android:colorBackground">@color/m3_background</item>
+        <item name="colorOnBackground">@color/m3_on_background</item>
+
+        <item name="android:textColorPrimary">@color/m3_on_surface</item>
+        <item name="android:textColorSecondary">@color/m3_on_surface_variant</item>
+        <item name="android:textColorTertiary">@color/m3_on_surface_variant</item>
+
+        <item name="colorPrimaryDark">@color/m3_primary</item>
+        <item name="colorAccent">@color/m3_secondary</item>
+        <item name="colorControlNormal">@color/m3_on_surface_variant</item>
+        <item name="colorControlActivated">@color/m3_primary</item>
+        <item name="colorControlHighlight">@color/m3_primary_container</item>
+
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.BlackBerryKeyboard.Settings" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/m3_primary</item>
+        <item name="colorOnPrimary">@color/m3_on_primary</item>
+        <item name="colorPrimaryContainer">@color/m3_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/m3_on_primary_container</item>
+        
+        <item name="colorSecondary">@color/m3_secondary</item>
+        <item name="colorOnSecondary">@color/m3_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/m3_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/m3_on_secondary_container</item>
+        
+        <item name="colorSurface">@color/m3_surface</item>
+        <item name="colorOnSurface">@color/m3_on_surface</item>
+        <item name="colorSurfaceVariant">@color/m3_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/m3_on_surface_variant</item>
+        
+        <item name="android:colorBackground">@color/m3_background</item>
+        <item name="colorOnBackground">@color/m3_on_background</item>
+        
+        <item name="colorError">@color/m3_error_light</item>
+        <item name="colorOnError">@color/m3_on_error_light</item>
+
+        <item name="colorPrimaryDark">@color/m3_primary</item>
+        <item name="colorAccent">@color/m3_secondary</item>
+        <item name="colorControlActivated">@color/m3_primary</item>
+        <item name="colorControlHighlight">@color/m3_primary</item>
+        <item name="colorControlNormal">@color/m3_on_surface_variant</item>
+        <item name="colorSwitchThumbNormal">@color/m3_surface_variant</item>
+
+        <item name="android:textAppearanceListItem">@style/TextAppearance.Material3.BodyLarge</item>
+        <item name="android:textAppearanceListItemSecondary">@style/TextAppearance.Material3.BodyMedium</item>
+        <item name="android:textAppearanceListItemSmall">@style/TextAppearance.Material3.BodySmall</item>
+        <item name="textAppearanceBody1">@style/TextAppearance.Material3.BodyLarge</item>
+        <item name="textAppearanceBody2">@style/TextAppearance.Material3.BodyMedium</item>
+
+        <item name="windowActionBar">true</item>
+        <item name="windowNoTitle">false</item>
+        <item name="actionBarStyle">@style/Widget.BlackBerryKeyboard.ActionBar</item>
+
+        <!-- Status bar values follow day/night here; a -night style would shadow the whole theme -->
+        <item name="android:statusBarColor">@color/m3_surface_container</item>
+        <item name="android:windowLightStatusBar">@bool/settings_light_status_bar</item>
+
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Material3.MaterialAlertDialog</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Material3.MaterialAlertDialog</item>
+
+        <item name="checkboxStyle">@style/Widget.Material3.CompoundButton.CheckBox</item>
+        <item name="switchStyle">@style/Widget.Material3.CompoundButton.Switch</item>
+        <item name="radioButtonStyle">@style/Widget.Material3.CompoundButton.RadioButton</item>
+    </style>
+
+    <style name="Widget.BlackBerryKeyboard.ActionBar" parent="Widget.AppCompat.ActionBar.Solid">
+        <item name="background">@color/m3_surface_container_light</item>
+        <item name="elevation">0dp</item>
+        <item name="titleTextStyle">@style/TextAppearance.BlackBerryKeyboard.ActionBar.Title</item>
+    </style>
+
+    <style name="TextAppearance.BlackBerryKeyboard.ActionBar.Title" parent="TextAppearance.AppCompat.Widget.ActionBar.Title">
+        <item name="android:textSize">20sp</item>
+        <item name="android:textColor">@color/m3_on_surface</item>
+    </style>
+</resources>

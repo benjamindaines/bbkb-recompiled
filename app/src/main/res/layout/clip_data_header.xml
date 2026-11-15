@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The root card takes tap (paste) and long-press (menu); nothing inside but the overflow button may be clickable, or it swallows the tap -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/clipboard_foreground"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="72dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="4dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:longClickable="true">
+
+    <ImageView
+        android:id="@+id/clipboard_image"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:scaleType="centerInside"
+        android:importantForAccessibility="no"
+        android:contentDescription="@string/clip_data_image_description"/>
+
+    <!-- Legacy boards only: the BlackBerry hairline between the icon and the text. -->
+    <ImageView
+        android:id="@+id/divider_image"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_marginStart="12dp"
+        android:scaleType="centerCrop"
+        android:importantForAccessibility="no"
+        android:visibility="gone"/>
+
+    <LinearLayout
+        android:id="@+id/clipboard_text_container"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/clipboard_data_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceListItem"
+            android:textSize="16sp"
+            android:maxLines="3"
+            android:ellipsize="end"/>
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/clipboard_pin_glyph"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_marginStart="8dp"
+        android:src="@drawable/ic_inputboard_clipboard_pin"
+        android:contentDescription="@string/clipboard_section_pinned"
+        android:visibility="gone"/>
+
+    <ImageButton
+        android:id="@+id/clipboard_overflow"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/ic_inputboard_clipboard_more"
+        android:scaleType="center"
+        android:background="@null"
+        android:contentDescription="@string/clipboard_more_options"/>
+</LinearLayout>

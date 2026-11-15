@@ -1,0 +1,781 @@
+package dev.bbkb.ime.core.settings.screens
+
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import dev.bbkb.ime.keyboard.inputboard.voice.VoiceLanguages
+import dev.bbkb.ime.core.locale.multilanguage.LocaleItem
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.bbkb.ime.R
+import dev.bbkb.ime.core.distribution.PackEntry
+import dev.bbkb.ime.core.distribution.Packs
+import dev.bbkb.ime.core.languagepack.PackDownloadManager
+import dev.bbkb.ime.core.languagepack.PackOfferSource
+import dev.bbkb.ime.core.languagepack.PackState
+import dev.bbkb.ime.core.languagepack.PackText
+import dev.bbkb.ime.core.device.profile.DeviceProfile
+import dev.bbkb.ime.core.layout.LetterLayout
+import dev.bbkb.ime.core.layout.LetterLayoutChoice
+import dev.bbkb.ime.core.layout.LetterLayoutRegistry
+import dev.bbkb.ime.core.layout.OnScreenKeyboardChoice
+import dev.bbkb.ime.core.layout.PhysicalKeyResolver
+import dev.bbkb.ime.core.locale.KeyboardLanguages
+import dev.bbkb.ime.core.locale.ResourceLocaleUtils
+import dev.bbkb.ime.core.locale.multilanguage.MultiLanguageRepository
+import dev.bbkb.ime.core.locale.SubtypeEnabler
+import dev.bbkb.ime.core.settings.PrefsManager
+import dev.bbkb.ime.core.settings.search.settingsSearchAnchor
+import dev.bbkb.ime.core.settings.ui.LocalInGroup
+import dev.bbkb.ime.core.settings.ui.GroupEdge
+import dev.bbkb.ime.core.settings.ui.groupEdge
+import dev.bbkb.ime.core.settings.ui.groupOuterCorners
+import dev.bbkb.ime.core.settings.ui.LocalSpacing
+import dev.bbkb.ime.core.settings.ui.PreferenceCategory
+import dev.bbkb.ime.core.settings.ui.PreferenceItem
+import dev.bbkb.ime.core.settings.ui.PreferenceLeadingBadge
+import dev.bbkb.ime.core.settings.ui.PreferenceScreen
+import dev.bbkb.ime.core.settings.ui.SettingsScaffold
+import dev.bbkb.ime.core.settings.ui.SwitchPreference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
+
+/**
+ * The Languages screen: the keyboards the user switches between, adding a language (which fetches
+ * its dictionary), per-keyboard extra prediction languages, and links to switching options and
+ * dictionary files. On Android 14+ [SubtypeEnabler.setEnabledList] edits the enabled keyboards
+ * directly; before that edits end in Android's language list. Enabled state is re-read
+ * ([KeyboardLanguages.read]) on resume and after every edit; nothing here is the source of truth.
+ */
+@Composable
+fun LanguagesHubScreen(
+    onNavigateToLanguageSwitching: () -> Unit,
+    onNavigateToDictionaryFiles: () -> Unit,
+    onNavigateBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val direct = remember { SubtypeEnabler.canEnableDirectly() }
+    val hasPhysicalKeyboard = remember { DeviceProfile.current()?.hasPhysicalKeyboard() ?: false }
+    val prefs = remember { PrefsManager.getPrefs(context) }
+
+    var snapshot by remember { mutableStateOf<KeyboardLanguages.Snapshot?>(null) }
+    var packs by remember { mutableStateOf<Packs?>(null) }
+    // Dictionaries each keyboard still needs, keyed by subtype hash.
+    var missing by remember { mutableStateOf<Map<Int, List<PackEntry>>>(emptyMap()) }
+    var reloads by remember { mutableIntStateOf(0) }
+
+    var showPicker by remember { mutableStateOf(false) }
+    var sheetFor by remember { mutableStateOf<KeyboardLanguages.Keyboard?>(null) }
+
+    val downloads = remember { PackDownloadManager.getInstance(context) }
+    val downloadStates by downloads.states.collectAsStateWithLifecycle()
+
+    var layoutDocuments by remember { mutableStateOf<LayoutDocuments?>(null) }
+    // Bumped when a layout is chosen, so the sheet re-reads the choices.
+    var layoutChoices by remember { mutableIntStateOf(0) }
+
+    fun reload() { reloads++ }
+
+    LaunchedEffect(Unit) { packs = PackOfferSource.loadPacks(context) }
+    LaunchedEffect(reloads) { layoutDocuments = withContext(Dispatchers.IO) { LayoutDocuments.read(context) } }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { reload() }
+    // A finished download may have registered and turned on a keyboard.
+    LaunchedEffect(downloadStates.values.count { it is PackState.Installed }) { reload() }
+
+    LaunchedEffect(reloads, packs) {
+        val read = withContext(Dispatchers.IO) { KeyboardLanguages.read(context) }
+        snapshot = read
+        val catalogue = packs ?: return@LaunchedEffect
+        missing = withContext(Dispatchers.IO) {
+            read.keyboards.associate { it.subtype.hashCode() to PackOfferSource.missingPacks(context, it.locales, catalogue) }
+        }
+    }
+
+    fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+
+    /**
+     * [turnOn]: each language also becomes its own keyboard on install. Only when adding that
+     * language; a dictionary for an existing keyboard or an extra language must not add a keyboard.
+     */
+    fun download(entries: List<PackEntry>, turnOn: Boolean) {
+        val catalogue = packs ?: return
+        entries.forEach { downloads.download(catalogue, it, turnOn) }
+    }
+
+    SettingsScaffold(
+        title = stringResource(R.string.settings_languages_title),
+        onNavigateBack = onNavigateBack,
+    ) { padding ->
+        val current = snapshot
+        val spacing = LocalSpacing.current
+        // Three groups: follow-the-phone rows, keyboards plus the Add row, and the two links.
+        val topCount = if (!direct) 2 else 1
+        val keyboards = current?.keyboards.orEmpty()
+        val keyboardsCount = keyboards.size + 1 // the Add row closes the group
+        CompositionLocalProvider(LocalInGroup provides true) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(
+                    start = spacing.groupInset,
+                    end = spacing.groupInset,
+                    bottom = 24.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(spacing.groupGap),
+            ) {
+                if (!direct) {
+                    item(key = "old-android") {
+                        PreferenceItem(
+                            title = stringResource(R.string.languages_hub_old_android),
+                            icon = ImageVector.vectorResource(R.drawable.ic_settings_info),
+                            groupEdge = groupEdge(0, topCount),
+                        )
+                    }
+                }
+                item(key = "follow") {
+                    val follows = current?.followsSystem == true
+                    // SwitchPreference and PreferenceScreen take no edge, so the item paints the group corners.
+                    Box(modifier = Modifier.groupOuterCorners(groupEdge(topCount - 1, topCount))) {
+                        SwitchPreference(
+                            title = stringResource(R.string.languages_hub_follow_system_title),
+                            icon = ImageVector.vectorResource(R.drawable.ic_settings_phone_languages),
+                            summary = stringResource(
+                                if (follows) R.string.languages_hub_follow_system_on else R.string.languages_hub_follow_system_off
+                            ),
+                            checked = follows,
+                            enabled = current != null,
+                            onCheckedChange = { follow ->
+                                if (!direct) {
+                                    SubtypeEnabler.openLanguageSettings(context)
+                                } else scope.launch {
+                                    val ok = withContext(Dispatchers.IO) { KeyboardLanguages.setFollowsSystem(context, follow) }
+                                    if (!ok) toast(context.getString(R.string.languages_hub_failed))
+                                    reload()
+                                }
+                            },
+                        )
+                    }
+                }
+
+                item(key = "keyboards-header") {
+                    PreferenceCategory(
+                        stringResource(R.string.languages_hub_keyboards_header),
+                        modifier = Modifier.outsideGroupInset(spacing.groupInset),
+                    )
+                    Text(
+                        text = stringResource(R.string.languages_hub_keyboards_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(
+                            start = LocalSpacing.current.listItemPadding,
+                            end = LocalSpacing.current.listItemPadding,
+                            bottom = LocalSpacing.current.small,
+                        ),
+                    )
+                }
+                itemsIndexed(keyboards, key = { _, kb -> "kb-" + kb.subtype.hashCode() }) { index, keyboard ->
+                    val needed = missing[keyboard.subtype.hashCode()].orEmpty()
+                    KeyboardRow(
+                        keyboard = keyboard,
+                        edge = groupEdge(index, keyboardsCount),
+                        dictionaryLine = dictionaryLine(context, needed, downloadStates),
+                        // Offered while nothing is downloading: a duplicate Download would look like it did nothing.
+                        downloadable = needed.filter { downloadStates[it.locale] !is PackState.Downloading },
+                        onDownload = { download(it, turnOn = false) },
+                        onOpen = { sheetFor = keyboard },
+                    )
+                }
+                item(key = "add") {
+                    PreferenceItem(
+                        title = stringResource(R.string.languages_hub_add),
+                        icon = ImageVector.vectorResource(R.drawable.ic_settings_m_add),
+                        enabled = current != null,
+                        groupEdge = groupEdge(keyboardsCount - 1, keyboardsCount),
+                        onClick = { showPicker = true },
+                    )
+                }
+
+                item(key = "more-header") {
+                    PreferenceCategory(
+                        stringResource(R.string.languages_hub_more_header),
+                        modifier = Modifier.outsideGroupInset(spacing.groupInset),
+                    )
+                }
+                item(key = "switching") {
+                    Box(modifier = Modifier.groupOuterCorners(groupEdge(0, 2))) {
+                        PreferenceScreen(
+                            title = stringResource(R.string.settings_language_switching_title),
+                            summary = stringResource(R.string.settings_language_switching_summary),
+                            icon = ImageVector.vectorResource(R.drawable.ic_settings_language_switching),
+                            onClick = onNavigateToLanguageSwitching,
+                        )
+                    }
+                }
+                item(key = "files") {
+                    Box(modifier = Modifier.groupOuterCorners(groupEdge(1, 2))) {
+                        PreferenceScreen(
+                            title = stringResource(R.string.settings_language_packs_title),
+                            summary = stringResource(R.string.settings_language_packs_summary),
+                            icon = ImageVector.vectorResource(R.drawable.ic_settings_language_packs),
+                            onClick = onNavigateToDictionaryFiles,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    sheetFor?.let { keyboard ->
+        val language = remember(keyboard) { LetterLayoutChoice.languageOf(keyboard.subtype) }
+        val onScreenRows = remember(keyboard, layoutDocuments) {
+            layoutDocuments?.rowsFor(context, keyboard, language, LetterLayout.Target.VKB).orEmpty()
+        }
+        val physicalRows = remember(keyboard, layoutDocuments, hasPhysicalKeyboard) {
+            if (!hasPhysicalKeyboard) emptyList() else layoutDocuments?.rowsFor(context, keyboard, language, LetterLayout.Target.PKB).orEmpty()
+        }
+        // A choice whose layout is gone leaves the keyboard its default, so show that row chosen: the
+        // on-screen list's first row, or on the keypad the alphabet document, else the keypad's letters.
+        fun chosenIn(rows: List<LayoutChoiceRow>, target: LetterLayout.Target, default: String): String =
+            LetterLayoutChoice.chosenId(prefs, language, target).takeIf { id -> rows.any { it.id == id } } ?: default
+        val chosenOnScreen = remember(keyboard, layoutChoices, onScreenRows) { chosenIn(onScreenRows, LetterLayout.Target.VKB, "") }
+        val chosenPhysical = remember(keyboard, layoutChoices, physicalRows) {
+            chosenIn(physicalRows, LetterLayout.Target.PKB, layoutDocuments?.defaultPhysicalId(context, keyboard, language) ?: "")
+        }
+        val alwaysOnScreen = remember(keyboard, layoutChoices) {
+            if (hasPhysicalKeyboard && language != null) OnScreenKeyboardChoice.isOn(prefs, language) else null
+        }
+        KeyboardSheet(
+            keyboard = keyboard,
+            onScreenRows = onScreenRows,
+            physicalRows = physicalRows,
+            chosenOnScreenId = chosenOnScreen,
+            chosenPhysicalId = chosenPhysical,
+            onChooseLayout = { target, id ->
+                if (language != null) {
+                    LetterLayoutChoice.choose(context, language, target, id)
+                    layoutChoices++
+                }
+            },
+            alwaysOnScreen = alwaysOnScreen,
+            onAlwaysOnScreen = { on ->
+                if (language != null) {
+                    OnScreenKeyboardChoice.choose(context, language, on)
+                    layoutChoices++
+                }
+            },
+            canRemove = (snapshot?.keyboards?.size ?: 0) > 1,
+            choices = remember(keyboard) { KeyboardLanguages.extraChoices(context, keyboard) },
+            onSave = { extras ->
+                sheetFor = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { KeyboardLanguages.setExtras(context, keyboard, extras) }
+                    when (result) {
+                        KeyboardLanguages.ExtrasResult.DONE -> Unit
+                        KeyboardLanguages.ExtrasResult.NEEDS_SYSTEM_SETTINGS -> {
+                            toast(context.getString(R.string.languages_hub_turn_on_in_settings, keyboard.name))
+                            SubtypeEnabler.openLanguageSettings(context)
+                        }
+                        KeyboardLanguages.ExtrasResult.FAILED -> toast(context.getString(R.string.languages_hub_failed))
+                    }
+                    reload()
+                    // Extra languages need their dictionaries: fetch what is missing.
+                    val catalogue = packs
+                    if (catalogue != null && extras.isNotEmpty()) {
+                        val needed = withContext(Dispatchers.IO) {
+                            PackOfferSource.missingPacks(context, extras.map { it.first }, catalogue)
+                        }
+                        download(needed, turnOn = false)
+                    }
+                }
+            },
+            onRemove = {
+                sheetFor = null
+                if (!direct) {
+                    toast(context.getString(R.string.languages_hub_turn_off_in_settings, keyboard.name))
+                    SubtypeEnabler.openLanguageSettings(context)
+                } else scope.launch {
+                    val ok = withContext(Dispatchers.IO) { KeyboardLanguages.remove(context, keyboard) }
+                    if (!ok) toast(context.getString(R.string.languages_hub_failed))
+                    reload()
+                }
+            },
+            onDismiss = { sheetFor = null },
+        )
+    }
+
+    val pickerSnapshot = snapshot
+    if (showPicker && pickerSnapshot != null) {
+        LanguagePickerDialog(
+            loadCandidates = {
+                val catalogue = packs
+                KeyboardLanguages.candidates(context, pickerSnapshot, catalogue) { locale ->
+                    catalogue?.let { PackOfferSource.missingPacks(context, listOf(locale), it).firstOrNull() }
+                }
+            },
+            onPick = { candidate ->
+                showPicker = false
+                scope.launch {
+                    val subtype = candidate.subtype
+                    when {
+                        subtype == null -> {
+                            // No keyboard until the pack installs; the installer registers it (and turns it on, 14+).
+                            candidate.pack?.let { download(listOf(it), turnOn = true) }
+                            toast(context.getString(R.string.languages_hub_downloading_then_on, candidate.name))
+                        }
+                        direct -> {
+                            val ok = withContext(Dispatchers.IO) { KeyboardLanguages.add(context, subtype) }
+                            if (ok) VoiceLanguages.downloadForKeyboard(context, subtype.locale)
+                            // Already on: the dictionary must not turn on a second keyboard.
+                            candidate.pack?.let { download(listOf(it), turnOn = false) }
+                            toast(context.getString(if (ok) R.string.languages_hub_added else R.string.languages_hub_failed, candidate.name))
+                        }
+                        else -> {
+                            candidate.pack?.let { download(listOf(it), turnOn = false) }
+                            toast(context.getString(R.string.languages_hub_turn_on_in_settings, candidate.name))
+                            SubtypeEnabler.openLanguageSettings(context)
+                        }
+                    }
+                    reload()
+                }
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
+}
+
+/** Lays an item out [inset] wider on each side, undoing the list's group inset for a category label. */
+private fun Modifier.outsideGroupInset(inset: Dp): Modifier = layout { measurable, constraints ->
+    val extra = inset.roundToPx() * 2
+    val wider = if (constraints.hasBoundedWidth) {
+        constraints.copy(maxWidth = constraints.maxWidth + extra)
+    } else {
+        constraints
+    }
+    val placeable = measurable.measure(wider)
+    val width = (placeable.width - extra).coerceIn(constraints.minWidth, constraints.maxWidth)
+    layout(width, placeable.height) { placeable.placeRelative(-extra / 2, 0) }
+}
+
+/** The dictionary status for a keyboard's row, or null when every dictionary it needs is here. */
+private fun dictionaryLine(
+    context: Context,
+    missing: List<PackEntry>,
+    states: Map<String, PackState>,
+): String? {
+    if (missing.isEmpty()) return null
+    missing.forEach { entry ->
+        val state = states[entry.locale]
+        if (state is PackState.Downloading) {
+            return context.getString(R.string.languages_hub_dictionary_downloading, (state.progress * 100).toInt())
+        }
+    }
+    if (missing.any { states[it.locale] is PackState.Failed }) {
+        return context.getString(R.string.languages_hub_dictionary_failed)
+    }
+    return context.getString(R.string.languages_hub_dictionary_missing)
+}
+
+/**
+ * One keyboard as a navigation row opening its sheet. A missing dictionary gets its own Download
+ * button here, as the row's primary action.
+ */
+@Composable
+private fun KeyboardRow(
+    keyboard: KeyboardLanguages.Keyboard,
+    edge: GroupEdge,
+    dictionaryLine: String?,
+    downloadable: List<PackEntry>,
+    onDownload: (List<PackEntry>) -> Unit,
+    onOpen: () -> Unit,
+) {
+    val extras = keyboard.extras
+    val extrasLine = extras.takeIf { it.isNotEmpty() }?.let {
+        stringResource(R.string.languages_hub_also_predicts, it.joinToString(", ") { item -> item.toString() })
+    }
+    val summary = listOfNotNull(extrasLine, dictionaryLine).joinToString("\n").ifEmpty { null }
+    PreferenceItem(
+        title = keyboard.name,
+        summary = summary,
+        leading = { PreferenceLeadingBadge(keyboard.locale.substringBefore('_').uppercase(Locale.ROOT)) },
+        groupEdge = edge,
+        onClick = onOpen,
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (downloadable.isNotEmpty()) {
+                    TextButton(onClick = { onDownload(downloadable) }) {
+                        Text(stringResource(R.string.language_packs_download))
+                    }
+                }
+                Icon(
+                    ImageVector.vectorResource(R.drawable.ic_settings_m_chevron_right),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
+}
+
+/** The letter layouts a keyboard's Layout row can offer, read once per screen load. */
+private class LayoutDocuments(val registry: LetterLayoutRegistry, val builtIns: List<LetterLayout>, val custom: List<LetterLayout>) {
+    /** [keyboard]'s layout rows for [target] in [language]: its default, then [LetterLayoutChoice.options]. Empty without a language. */
+    fun rowsFor(
+        context: Context,
+        keyboard: KeyboardLanguages.Keyboard,
+        language: String?,
+        target: LetterLayout.Target,
+    ): List<LayoutChoiceRow> {
+        if (language == null) return emptyList()
+        val ownSet = ResourceLocaleUtils.getKeyboardLayoutSetName(keyboard.subtype)
+        val options = LetterLayoutChoice.options(
+            builtIns = builtIns,
+            custom = custom,
+            language = language,
+            target = target,
+            latin = MultiLanguageRepository.isLatinScript(keyboard.locale),
+            drawsOnScreen = { layout -> LetterLayoutChoice.drawsOnScreen(context, layout) },
+            ownLayoutSet = ownSet,
+            languageDocument = if (target == LetterLayout.Target.PKB) languageDocument(keyboard, language) else null,
+        )
+        val keypad = DeviceProfile.current()?.keypadLayout
+        val keypadName = ResourceLocaleUtils.getKeyboardLayoutSetDisplayName(keypad) ?: keypad?.uppercase() ?: ""
+        val latin = MultiLanguageRepository.isLatinScript(keyboard.locale)
+        val letters = ResourceLocaleUtils.getSubtypeLocaleDisplayName(language) ?: keyboard.name
+        fun named(arrangement: String) = context.getString(R.string.layout_choice_name, arrangement, letters)
+        // The layout set's name (QWERTY, AZERTY, QWERTZ); an unnamed Latin set (Spanish, Nordic) is QWERTY.
+        val ownArrangement = ResourceLocaleUtils.getKeyboardLayoutSetDisplayName(ownSet) ?: if (latin) "QWERTY" else null
+        return layoutChoiceRows(
+            options,
+            // "QWERTY (English)"; a keyboard in a script of its own is named by its keyboard: "Arabic".
+            ownTitle = ownArrangement?.let(::named) ?: keyboard.name,
+            // The Physical layouts screen's wording, so the screens agree.
+            ownSummary = context.getString(R.string.settings_pkb_layouts_none_summary),
+            keypadLettersTitle = context.getString(R.string.languages_hub_layout_keypad_letters, keypadName),
+            name = { layout ->
+                when {
+                    target == LetterLayout.Target.VKB && layout.origin == LetterLayout.Origin.BUILT_IN -> named(layout.name)
+                    target == LetterLayout.Target.PKB && layout.origin == LetterLayout.Origin.BUILT_IN &&
+                        !layout.optIn && layout.binding.isLanguageBound -> named(keypadName)
+                    else -> layout.name
+                }
+            },
+        )
+    }
+
+    /** The alphabet document the registry selects for [keyboard] on this phone's keypad, or null. */
+    private fun languageDocument(keyboard: KeyboardLanguages.Keyboard, language: String): LetterLayout? {
+        val profile = DeviceProfile.current()
+        return registry.builtIn(
+            language,
+            profile?.keypadLayout,
+            profile?.effectiveKeypadType,
+            ResourceLocaleUtils.getKeyboardLayoutSetName(keyboard.subtype),
+        )
+    }
+
+    /** The physical row chosen for choice `""`: [LetterLayoutChoice.defaultPhysicalId]. */
+    fun defaultPhysicalId(context: Context, keyboard: KeyboardLanguages.Keyboard, language: String?): String =
+        LetterLayoutChoice.defaultPhysicalId(language?.let { languageDocument(keyboard, it) })
+
+    companion object {
+        fun read(context: Context): LayoutDocuments {
+            val registry = LetterLayoutRegistry(context)
+            return LayoutDocuments(registry, registry.builtInIds().mapNotNull { registry.builtIn(it) }, registry.list())
+        }
+    }
+}
+
+/**
+ * One keyboard's sheet: letter layout, extra prediction languages (Latin-script keyboards only)
+ * and removal. The layout row shows only when there is something to choose.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun KeyboardSheet(
+    keyboard: KeyboardLanguages.Keyboard,
+    onScreenRows: List<LayoutChoiceRow>,
+    physicalRows: List<LayoutChoiceRow>,
+    chosenOnScreenId: String,
+    chosenPhysicalId: String,
+    onChooseLayout: (LetterLayout.Target, String) -> Unit,
+    /** "Always show the on-screen keyboard" for this keyboard's language; null hides the row. */
+    alwaysOnScreen: Boolean?,
+    onAlwaysOnScreen: (Boolean) -> Unit,
+    canRemove: Boolean,
+    choices: List<LocaleItem>,
+    onSave: (List<LocaleItem>) -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val spacing = LocalSpacing.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val initial = remember(keyboard) { keyboard.extras.map { it.first as String }.toSet() }
+    var selected by remember(keyboard) { mutableStateOf(initial) }
+    var query by remember(keyboard) { mutableStateOf("") }
+    var confirmRemove by remember { mutableStateOf(false) }
+    var chooseLayout by remember { mutableStateOf<LetterLayout.Target?>(null) }
+    val changed = selected != initial
+
+    // Grouped by the state when opened so a row does not jump groups under the finger that ticked it.
+    val (chosen, available) = remember(choices, initial) {
+        choices.sortedBy { it.toString() }.partition { it.first in initial }
+    }
+    fun matches(item: LocaleItem) = query.isBlank() || item.toString().contains(query.trim(), ignoreCase = true)
+    val shownChosen = chosen.filter(::matches)
+    val shownAvailable = available.filter(::matches)
+
+    // As tall as its content, capped so the Remove row stays on short screens; the list scrolls.
+    val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.88f).dp
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.fillMaxWidth().heightIn(max = maxSheetHeight)) {
+            // Done applies a changed extras selection, else closes the sheet.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = spacing.listItemPadding, end = spacing.small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = keyboard.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = {
+                        if (changed) onSave(choices.filter { it.first in selected }.map { LocaleItem(it.first) })
+                        else onDismiss()
+                    },
+                ) { Text(stringResource(R.string.languages_hub_sheet_done)) }
+            }
+
+            val currentOnScreen = onScreenRows.firstOrNull { it.id == chosenOnScreenId }
+            val currentPhysical = physicalRows.firstOrNull { it.id == chosenPhysicalId }
+            val showOnScreen = currentOnScreen != null && onScreenRows.size > 1
+            val showPhysical = currentPhysical != null && physicalRows.size > 1
+            if (showOnScreen) {
+                KeyboardLayoutRow(
+                    title = stringResource(R.string.settings_keyboard_title),
+                    current = currentOnScreen!!,
+                    onClick = { chooseLayout = LetterLayout.Target.VKB },
+                )
+            }
+            if (showPhysical) {
+                KeyboardLayoutRow(
+                    title = stringResource(R.string.settings_physical_keyboard_title),
+                    current = currentPhysical!!,
+                    onClick = { chooseLayout = LetterLayout.Target.PKB },
+                )
+            }
+            if (alwaysOnScreen != null) {
+                SwitchPreference(
+                    title = stringResource(R.string.languages_hub_always_on_screen_title),
+                    checked = alwaysOnScreen,
+                    onCheckedChange = onAlwaysOnScreen,
+                )
+            }
+            if (showOnScreen || showPhysical || alwaysOnScreen != null) {
+                HorizontalDivider(modifier = Modifier.padding(horizontal = spacing.listItemPadding))
+            }
+
+            if (keyboard.canHaveExtras) {
+                PreferenceCategory(stringResource(R.string.languages_hub_sheet_extras_header))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text(stringResource(R.string.languages_hub_search)) },
+                    leadingIcon = { Icon(ImageVector.vectorResource(R.drawable.ic_settings_m_search), contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(ImageVector.vectorResource(R.drawable.ic_settings_m_clear), contentDescription = stringResource(R.string.languages_hub_sheet_clear_search))
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = spacing.listItemPadding, vertical = spacing.small),
+                )
+                LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+                    items(shownChosen + shownAvailable, key = { it.first }) { item ->
+                        if (item === shownAvailable.firstOrNull() && shownChosen.isNotEmpty()) {
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = spacing.listItemPadding))
+                        }
+                        val checked = item.first in selected
+                        ListItem(
+                            headlineContent = { Text(item.toString()) },
+                            leadingContent = { Checkbox(checked = checked, onCheckedChange = null) },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.toggleable(value = checked, role = Role.Checkbox) { on ->
+                                selected = if (on) selected + item.first else selected - item.first
+                            },
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = stringResource(R.string.languages_hub_options_extras_latin_only),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = spacing.listItemPadding, vertical = spacing.small),
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(top = spacing.small))
+            // Disabled for the last keyboard: an empty list would mean "follow the phone".
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.languages_hub_sheet_remove)) },
+                supportingContent = if (canRemove) null else {
+                    { Text(stringResource(R.string.languages_hub_last_keyboard)) }
+                },
+                leadingContent = { Icon(ImageVector.vectorResource(R.drawable.ic_settings_m_delete), contentDescription = null) },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent,
+                    headlineColor = if (canRemove) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                    leadingIconColor = if (canRemove) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                ),
+                modifier = Modifier.clickable(enabled = canRemove) { confirmRemove = true },
+            )
+            Spacer(modifier = Modifier.height(spacing.large))
+        }
+    }
+
+    chooseLayout?.let { target ->
+        val onScreen = target == LetterLayout.Target.VKB
+        KeyboardLayoutDialog(
+            title = stringResource(if (onScreen) R.string.settings_keyboard_title else R.string.settings_physical_keyboard_title),
+            rows = if (onScreen) onScreenRows else physicalRows,
+            selectedId = if (onScreen) chosenOnScreenId else chosenPhysicalId,
+            onSelect = { id ->
+                chooseLayout = null
+                onChooseLayout(target, id)
+            },
+            onDismiss = { chooseLayout = null },
+        )
+    }
+
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text(stringResource(R.string.languages_hub_sheet_remove_title, keyboard.name)) },
+            text = { Text(stringResource(R.string.languages_hub_sheet_remove_message)) },
+            confirmButton = {
+                TextButton(onClick = { confirmRemove = false; onRemove() }) {
+                    Text(stringResource(R.string.languages_hub_sheet_remove_confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun LanguagePickerDialog(
+    loadCandidates: () -> List<KeyboardLanguages.Candidate>,
+    onPick: (KeyboardLanguages.Candidate) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val spacing = LocalSpacing.current
+    var candidates by remember { mutableStateOf<List<KeyboardLanguages.Candidate>?>(null) }
+    var query by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { candidates = withContext(Dispatchers.IO) { loadCandidates() } }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(end = spacing.listItemPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(ImageVector.vectorResource(R.drawable.ic_settings_m_arrow_back), contentDescription = null)
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        placeholder = { Text(stringResource(R.string.languages_hub_search)) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                val shown = candidates.orEmpty().filter {
+                    query.isBlank() || it.name.contains(query.trim(), ignoreCase = true)
+                }
+                LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                    items(shown, key = { (it.subtype?.hashCode() ?: 0).toString() + it.locale }) { candidate ->
+                        PreferenceItem(
+                            title = candidate.name,
+                            summary = candidate.pack?.let {
+                                stringResource(R.string.languages_hub_downloads, PackText.size(context, it.size))
+                            },
+                            leading = {
+                                PreferenceLeadingBadge(candidate.locale.substringBefore('_').uppercase(Locale.ROOT))
+                            },
+                            onClick = { onPick(candidate) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Keyboard xmlns:latin="http://schemas.android.com/apk/res-auto" latin:rowHeight="48dp">
+    <include latin:keyboardLayout="@xml/key_styles_common"/>
+    <include latin:keyboardLayout="@xml/key_styles_pkb"/>
+    <switch>
+        <case
+            latin:keyboardLayoutSet="arabic"
+            latin:physicalKeypadType="3 3row">
+            <include latin:keyboardLayout="@xml/row_supplementaluri_arabic_pkb_3row"/>
+        </case>
+        <case latin:physicalKeypadType="3 3row">
+            <include latin:keyboardLayout="@xml/row_supplementaluri_pkb_3row"/>
+        </case>
+    </switch>
+</Keyboard>

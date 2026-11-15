@@ -1,0 +1,231 @@
+package dev.bbkb.ime.core.device;
+
+import android.content.res.Resources;
+import android.content.res.TypedArray;
+import android.os.Build;
+import android.util.DisplayMetrics;
+import android.util.Log;
+import android.util.TypedValue;
+
+import dev.bbkb.ime.R;
+import dev.bbkb.ime.core.device.profile.DeviceProfile;
+import dev.bbkb.ime.core.settings.util.SettingsManager;
+
+import java.util.regex.PatternSyntaxException;
+import dev.bbkb.ime.BuildConfig;
+
+
+
+public final class ResourceConfigManager {
+
+    private static final String TAG = "ResourceConfigManager";
+
+    // Read many times during keyboard initialization and layout.
+    private static volatile int sCachedScreenWidth = -1;
+    private static volatile int sCachedOrientation = -1;
+    private static volatile int sCachedDensityDpi = -1;
+    private static volatile int sCachedScreenWidthDp = -1;
+
+    /** @param fraction a fraction read with an invalid default of -1 */
+    public static boolean isValidFraction(float fraction) {
+        return fraction >= 0.0f;
+    }
+
+    /** @param pixelSize a pixel size read with an invalid default of -1 */
+    public static boolean isValidPixelSize(int pixelSize) {
+        return pixelSize > 0;
+    }
+
+    private ResourceConfigManager() {
+        // Static utility.
+    }
+
+    public static int getScreenWidthPixels(Resources resources) {
+        final android.content.res.Configuration configuration = resources.getConfiguration();
+        final int orientation = configuration.orientation;
+        final int densityDpi = configuration.densityDpi;
+        final int screenWidthDp = configuration.screenWidthDp;
+        // Orientation alone is not enough: a multi-window resize or a fold changes the width at
+        // constant orientation, and a density change changes it too.
+        if (sCachedScreenWidth > 0 && sCachedOrientation == orientation
+                && sCachedDensityDpi == densityDpi && sCachedScreenWidthDp == screenWidthDp) {
+            return sCachedScreenWidth;
+        }
+        sCachedScreenWidth = resources.getDisplayMetrics().widthPixels;
+        sCachedOrientation = orientation;
+        sCachedDensityDpi = densityDpi;
+        sCachedScreenWidthDp = screenWidthDp;
+        return sCachedScreenWidth;
+    }
+    
+    /**
+     * Height of the aux bar / suggestion strip, scaled by the keyboard height setting. Use this,
+     * not the dimension directly, or the strip stays full height while the keyboard shrinks.
+     */
+    public static int getSuggestionsStripHeight(Resources resources) {
+        int base = resources.getDimensionPixelSize(R.dimen.config_suggestions_strip_height);
+        float scale = SettingsManager.getEffectiveKeyboardHeightScale();
+        if (scale == 1.0f) {
+            return base;
+        }
+        return Math.max(1, Math.round(base * scale));
+    }
+
+    /** Call on a configuration change (orientation, density). */
+    public static void invalidateDimensionCache() {
+        sCachedScreenWidth = -1;
+        sCachedOrientation = -1;
+        sCachedDensityDpi = -1;
+        sCachedScreenWidthDp = -1;
+    }
+
+    // Display window of near-square panels: a width of exactly 720 px and a height of 720 to 772 px,
+    // inclusive. The upper bound is the least narrow entry of a resolution switcher that keeps the
+    // width and adds height. The generic height rules below resolve to a keyboard that is
+    // unaffected by the keyboard height setting on such a panel (see getKeyboardHeight), so the
+    // height is taken as a share of the screen height instead.
+    private static final int NEAR_SQUARE_SCREEN_WIDTH_PX = 720;
+    private static final int NEAR_SQUARE_SCREEN_MIN_HEIGHT_PX = 720;
+    private static final int NEAR_SQUARE_SCREEN_MAX_HEIGHT_PX = 772;
+
+    public static boolean isNearSquareScreen(Resources resources) {
+        final DisplayMetrics metrics = resources.getDisplayMetrics();
+        return metrics.widthPixels == NEAR_SQUARE_SCREEN_WIDTH_PX
+                && metrics.heightPixels >= NEAR_SQUARE_SCREEN_MIN_HEIGHT_PX
+                && metrics.heightPixels <= NEAR_SQUARE_SCREEN_MAX_HEIGHT_PX;
+    }
+
+    /**
+     * Share of the screen height taken by the keyboard on a near-square panel, per keyboard height
+     * mode, or -1 for a mode that has no share and uses the generic height rules.
+     */
+    private static float getNearSquareScreenHeightFraction(String mode) {
+        if ("extra_compact".equals(mode)) {
+            return 0.40f;
+        }
+        return -1.0f;
+    }
+
+    /**
+     * Keyboard height in pixels on a near-square panel for the current keyboard height mode, or
+     * -1 when the display is outside that window or the mode has no share of the screen height.
+     */
+    private static int getNearSquareScreenKeyboardHeight(Resources resources) {
+        if (!isNearSquareScreen(resources)) {
+            return -1;
+        }
+        final float fraction = getNearSquareScreenHeightFraction(SettingsManager.getKeyboardHeightMode());
+        if (fraction <= 0.0f) {
+            return -1;
+        }
+        return Math.round(resources.getDisplayMetrics().heightPixels * fraction);
+    }
+
+    public static int getKeyboardHeight(Resources resources) throws Resources.NotFoundException {
+        final int nearSquareHeight = getNearSquareScreenKeyboardHeight(resources);
+        if (nearSquareHeight > 0) {
+            return nearSquareHeight;
+        }
+        float dimension;
+        DisplayMetrics displayMetrics = resources.getDisplayMetrics();
+        // A physical-keyboard device in portrait whose screen is not taller than the mercury screen
+        // height gets a fixed dimension; the height scale of the keyboard height setting is not
+        // applied on this path.
+        if (DeviceProfile.current().hasPhysicalKeyboard() && resources.getConfiguration().orientation == 1 && displayMetrics.heightPixels - ((int) resources.getDimension(R.dimen.config_mercury_max_screen_height)) <= 0) {
+            return (int) resources.getDimension(R.dimen.config_default_mercury_keyboard_height);
+        }
+        dimension = resources.getDimension(R.dimen.config_default_keyboard_height);
+        float fraction = resources.getFraction(R.fraction.config_max_keyboard_height, displayMetrics.heightPixels, displayMetrics.heightPixels);
+        float fraction2 = resources.getFraction(R.fraction.config_min_keyboard_height, displayMetrics.heightPixels, displayMetrics.heightPixels);
+        if (fraction2 < 0.0f) {
+            fraction2 = -resources.getFraction(R.fraction.config_min_keyboard_height, displayMetrics.widthPixels, displayMetrics.widthPixels);
+        }
+        int baseHeight = (int) Math.max(Math.min(dimension, fraction), fraction2);
+
+        // Scale after clamping (expanded 1.15, regular 1.0, compact 0.85, extra_compact 0.75).
+        float scale = SettingsManager.getEffectiveKeyboardHeightScale();
+        if (scale != 1.0f) {
+            baseHeight = (int)(baseHeight * scale);
+        }
+
+        return baseHeight;
+    }
+
+    public static int getKeyboardHeightWithPadding(Resources resources) throws Resources.NotFoundException {
+        int iM5592b = getKeyboardHeight(resources);
+        int fraction = (int) resources.getFraction(R.fraction.config_key_vertical_gap_holo, iM5592b, iM5592b);
+        int fraction2 = (int) resources.getFraction(R.fraction.config_keyboard_bottom_padding_holo, iM5592b, iM5592b);
+        int fraction3 = (int) resources.getFraction(R.fraction.config_keyboard_top_padding_holo, iM5592b, iM5592b);
+        return (((((((iM5592b - fraction2) - fraction3) + fraction) / 4) * 4) + fraction3) + fraction2) - fraction;
+    }
+
+    /** @param resId fraction resource id */
+    public static float getFractionValue(Resources resources, int resId) {
+        return resources.getFraction(resId, 1, 1);
+    }
+
+    /**
+     * @param index attribute index
+     * @param defaultValue default when the attribute is missing or not a fraction
+     */
+    public static float getFractionOrDefault(TypedArray typedArray, int index, float defaultValue) {
+        TypedValue typedValuePeekValue = typedArray.peekValue(index);
+        return (typedValuePeekValue == null || !isFractionType(typedValuePeekValue)) ? defaultValue : typedArray.getFraction(index, 1, 1, defaultValue);
+    }
+
+    /** @param index attribute index; -1 when missing or not a fraction */
+    public static float getFractionOrInvalid(TypedArray typedArray, int index) {
+        return getFractionOrDefault(typedArray, index, -1.0f);
+    }
+
+    /** @param index attribute index; -1 when missing or not a dimension */
+    public static int getDimensionPixelSizeOrInvalid(TypedArray typedArray, int index) {
+        TypedValue typedValuePeekValue = typedArray.peekValue(index);
+        if (typedValuePeekValue == null || !isDimensionType(typedValuePeekValue)) {
+            return -1;
+        }
+        return typedArray.getDimensionPixelSize(index, -1);
+    }
+
+    /**
+     * @param index attribute index
+     * @param base base a fraction is taken of
+     * @param defaultValue default when the attribute is missing or neither type
+     */
+    public static float getFractionOrDimensionOrDefault(TypedArray typedArray, int index, int base, float defaultValue) {
+        TypedValue typedValuePeekValue = typedArray.peekValue(index);
+        if (typedValuePeekValue == null) {
+            return defaultValue;
+        }
+        if (isFractionType(typedValuePeekValue)) {
+            return typedArray.getFraction(index, base, base, defaultValue);
+        }
+        // getDimensionPixelSize rounds (52.5 -> 53) as SuggestionStripView does; getDimension would truncate.
+        return isDimensionType(typedValuePeekValue) ? typedArray.getDimensionPixelSize(index, (int) defaultValue) : defaultValue;
+    }
+
+    /**
+     * @param index attribute index
+     * @param defaultValue default when the attribute is missing or not an integer
+     */
+    public static int getIntOrDefault(TypedArray typedArray, int index, int defaultValue) {
+        TypedValue typedValuePeekValue = typedArray.peekValue(index);
+        return (typedValuePeekValue != null && isIntegerType(typedValuePeekValue)) ? typedArray.getInt(index, defaultValue) : defaultValue;
+    }
+
+    public static boolean isFractionType(TypedValue typedValue) {
+        return typedValue.type == 6;
+    }
+
+    public static boolean isDimensionType(TypedValue typedValue) {
+        return typedValue.type == 5;
+    }
+
+    public static boolean isIntegerType(TypedValue typedValue) {
+        return typedValue.type >= 16 && typedValue.type <= 31;
+    }
+
+    public static boolean isStringType(TypedValue typedValue) {
+        return typedValue.type == 3;
+    }
+}

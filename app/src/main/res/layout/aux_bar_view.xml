@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <dev.bbkb.ime.keyboard.auxbar.UnifiedSuggestionView
+        android:id="@+id/unified_suggestion_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <dev.bbkb.ime.keyboard.SimplifiedKeyboardView
+        android:id="@+id/shared_aux_key_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="invisible" />
+
+</merge>

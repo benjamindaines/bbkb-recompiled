@@ -1,0 +1,80 @@
+package com.blackberry.nuanceshim.languagepack;
+
+import android.content.Context;
+
+import dev.bbkb.ime.core.BlackBerryIME;
+import dev.bbkb.ime.core.ime.UIUpdateHandler;
+import dev.bbkb.ime.core.locale.LocaleUtils;
+import dev.bbkb.ime.core.shared.Logger;
+
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
+
+/** Checks language pack support on locale changes and signals when additional locales are ready. */
+public class LanguagePackLocaleMonitor {
+
+    private Locale currentLocale;
+
+    private Set<Locale> additionalLocales;
+
+    private final LanguagePackManager languagePackManager;
+
+    private final Context context;
+
+    private final UIUpdateHandler uiUpdateHandler;
+
+    public LanguagePackLocaleMonitor(Context context, UIUpdateHandler uiUpdateHandler) {
+        this.context = context;
+        this.uiUpdateHandler = uiUpdateHandler;
+        this.languagePackManager = LanguagePackManager.getInstance(context);
+    }
+
+    public void cleanup() {
+        // Nothing registered to tear down; BlackBerryIME.onDestroy still calls this.
+    }
+
+    public void onLocaleChanged(Locale locale, Set<Locale> set) {
+        boolean z = !(set == null || set.equals(this.additionalLocales)) || (set == null && this.additionalLocales != null);
+        if ((!Objects.equals(this.currentLocale, locale) || z) && !LocaleUtils.isNoLanguage(locale)) {
+            this.currentLocale = locale;
+            Logger.info("LPM", "Changing locale to " + locale.toString());
+            this.additionalLocales = set;
+            this.uiUpdateHandler.removeAdditionalLocalesReady();
+            if (this.languagePackManager.isSupported(this.currentLocale)) {
+                if (!this.languagePackManager.isInstalled(locale)) {
+                    Logger.info("LPM", "Language pack not installed for locale " + locale);
+                }
+                processAdditionalLocales();
+            } else {
+                Logger.warn("LPM", "No language database support for Locale " + locale);
+            }
+        }
+    }
+
+    private void processAdditionalLocales() {
+        Set<Locale> set = this.additionalLocales;
+        if (set == null || set.isEmpty() || !this.languagePackManager.isInstalled(this.currentLocale)) {
+            return;
+        }
+        Logger.info("LPM", "Subtype has additional locales" + this.additionalLocales.toString());
+        for (Locale locale : this.additionalLocales) {
+            if (!this.languagePackManager.isSupported(locale)) {
+                Logger.warn("LPM", "No language database support for Locale " + locale);
+            } else if (!this.languagePackManager.isInstalled(locale)) {
+                Logger.info("LPM", "Additional locale not installed: " + locale.toString());
+            } else {
+                Logger.info("LPM", "ready to load additional locale " + locale.toString());
+                this.uiUpdateHandler.postAdditionalLocalesReady();
+            }
+        }
+    }
+
+    public void forceBootComplete(Context context) {
+        if (this.languagePackManager.isBootCompleted()) {
+            return;
+        }
+        Logger.warn("LPM", "Forcing boot complete");
+        this.languagePackManager.onBootCompleted(context);
+    }
+}

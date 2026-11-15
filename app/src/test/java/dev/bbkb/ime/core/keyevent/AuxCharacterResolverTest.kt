@@ -1,0 +1,146 @@
+package dev.bbkb.ime.core.keyevent
+
+import android.view.KeyEvent
+import dev.bbkb.ime.core.device.config.model.AltMappingsTable
+import dev.bbkb.ime.core.layout.LetterLayoutXml
+import dev.bbkb.ime.core.layout.PhysicalKeyResolver
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.util.Locale
+
+/**
+ * Pins the tier chain of [AuxCharacterResolver], and that there is no tier below the two tables:
+ * with none declared, keys fall through to the device KCM (on the KEY2 the firmware's
+ * `stmpe{,_azerty,_qwertz}.kcm` already has the right per-layout answer).
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], manifest = Config.NONE)
+class AuxCharacterResolverTest {
+
+    private fun tableOf(vararg pairs: Pair<Int, Char>) = AltMappingsTable("test").apply {
+        pairs.forEach { (keyCode, c) -> addMapping(keyCode, c) }
+    }
+
+    /** Keycodes a hardcoded AZERTY/QWERTZ table would claim; they must fall through to the KCM. */
+    private val formerlyHardcoded = intArrayOf(
+        KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_P, KeyEvent.KEYCODE_V,
+        KeyEvent.KEYCODE_Y, KeyEvent.KEYCODE_Z
+    )
+
+    @Test
+    fun noTables_resolvesNothing_soTheKcmDecides() {
+        val resolver = AuxCharacterResolver.Builder().build()
+        for (keyCode in formerlyHardcoded) {
+            val result = resolver.resolve(keyCode)
+            assertFalse(
+                "keyCode $keyCode must fall through to the KCM, not to a built-in table",
+                result.hasCharacter()
+            )
+        }
+    }
+
+    @Test
+    fun keyEventWithNoTables_neverReturnsARetiredHardcodedValue() {
+        val resolver = AuxCharacterResolver.Builder().build()
+        // AZERTY values that would displace the firmware's own answer.
+        for ((keyCode, retired) in listOf(
+            KeyEvent.KEYCODE_A to '#', KeyEvent.KEYCODE_P to '*',
+            KeyEvent.KEYCODE_V to '7', KeyEvent.KEYCODE_Y to '1'
+        )) {
+            val result = resolver.resolve(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+            assertNotEquals(
+                "keyCode $keyCode resolved to the retired hardcoded AZERTY value",
+                "layout_override", result.source
+            )
+            if (result.hasCharacter()) {
+                assertEquals("keyCode $keyCode must come from the KCM", "kcm", result.source)
+                assertNotEquals(retired, result.character)
+            }
+        }
+    }
+
+    @Test
+    fun layoutOverridesTable_stillResolves_whenAConfigDeclaresOne() {
+        val resolver = AuxCharacterResolver.Builder()
+            .withLayoutOverridesTable(tableOf(KeyEvent.KEYCODE_Z to ')'))
+            .build()
+        val result = resolver.resolve(KeyEvent.KEYCODE_Z)
+        assertEquals(')', result.character)
+        assertEquals("layout_override", result.source)
+    }
+
+    @Test
+    fun altMappingsTable_outranksLayoutOverrides() {
+        val resolver = AuxCharacterResolver.Builder()
+            .withAltMappingsTable(tableOf(KeyEvent.KEYCODE_Z to '7'))
+            .withLayoutOverridesTable(tableOf(KeyEvent.KEYCODE_Z to ')'))
+            .build()
+        val result = resolver.resolve(KeyEvent.KEYCODE_Z)
+        assertEquals('7', result.character)
+        assertEquals("xml", result.source)
+    }
+
+    private fun withUserMap(keys: String, languages: String = "", block: () -> Unit) {
+        val saved = PhysicalKeyResolver.Snapshot()
+        val map = LetterLayoutXml.parse(
+            """<letter-layout version="1" id="t" name="t">
+                <bind languages="$languages" keypad="qwerty"/>
+                $keys
+            </letter-layout>"""
+        )
+        // Only the user tier: no built-in documents, as on a keyboard whose language has none.
+        PhysicalKeyResolver.chosenLayoutSource = { _ -> map }
+        PhysicalKeyResolver.builtIns = null
+        PhysicalKeyResolver.localeSource = { Locale.ENGLISH }
+        PhysicalKeyResolver.keypadLayoutSource = { "qwerty" }
+        try {
+            block()
+        } finally {
+            saved.restore()
+        }
+    }
+
+    @Test
+    fun userMap_outranksTheDeviceTable_forTheKeysItNames() = withUserMap(
+        """<key code="KEYCODE_Z" keySpec="z" alt="§"/>"""
+    ) {
+        val resolver = AuxCharacterResolver.Builder()
+            .withAltMappingsTable(tableOf(KeyEvent.KEYCODE_Z to '7', KeyEvent.KEYCODE_X to '8'))
+            .build()
+        val z = resolver.resolve(KeyEvent.KEYCODE_Z)
+        assertEquals('§', z.character)
+        assertEquals("user", z.source)
+        assertEquals("user", resolver.resolve(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_Z)).source)
+        // A key the map does not name keeps the device table's answer.
+        assertEquals('8', resolver.resolve(KeyEvent.KEYCODE_X).character)
+        assertEquals("xml", resolver.resolve(KeyEvent.KEYCODE_X).source)
+    }
+
+    @Test
+    fun userMap_boundToAnotherKeyboard_isNotConsulted() = withUserMap(
+        """<key code="KEYCODE_Z" keySpec="z" alt="§"/>""", languages = "fr"
+    ) {
+        val resolver = AuxCharacterResolver.Builder()
+            .withAltMappingsTable(tableOf(KeyEvent.KEYCODE_Z to '7'))
+            .build()
+        assertEquals('7', resolver.resolve(KeyEvent.KEYCODE_Z).character)
+    }
+
+    @Test
+    fun userMap_canGiveACharacterOutsideTheBmp() = withUserMap(
+        """<key code="KEYCODE_Z" keySpec="z" alt="😀"/>"""
+    ) {
+        val result = AuxCharacterResolver.Builder().build().resolve(KeyEvent.KEYCODE_Z)
+        assertTrue(result.hasCharacter())
+        assertEquals(0x1F600, result.codePoint)
+        assertEquals("😀", result.text())
+        // The char view cannot hold it, and says so with 0 rather than half a surrogate pair.
+        assertEquals(0.toChar(), result.character)
+    }
+}

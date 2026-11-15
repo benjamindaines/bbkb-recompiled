@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!-- arabic_pkb keyboard layout
+PID: ET9PLIDArabic
+SID: ET9SKIDPhonePad -->
+<!-- Doubled keycaps (Q: ص ض, A: س ش) list the UNSHIFTED letter first: the letter-layout
+     generator (xt9kdb-scaffold/tools/letter_layouts_gen.py) reads the first code as the key's
+     letter and the rest as its Shift / double-tap legends, matching the Arabic letter layout
+     (letter_layouts/ar.xml: keySpec ص, characterMapKeys ض). -->
+
+<keyboard
+  primaryId="1"
+  secondaryId="6"
+  defaultLayoutWidth="1080"
+  defaultLayoutHeight="324"
+  addAltChars="true">
+
+  <area>
+    <key keyType="regional" keyCodes="0x0635, 0x0636" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="0dp" />
+    <key keyType="regional" keyCodes="0x062B" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="108dp" />
+    <key keyType="regional" keyCodes="0x0642" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="216dp" />
+    <key keyType="regional" keyCodes="0x0641" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="324dp" />
+    <key keyType="regional" keyCodes="0x063A" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="432dp" />
+    <key keyType="regional" keyCodes="0x0639" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="540dp" />
+    <key keyType="regional" keyCodes="0x0647" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="648dp" />
+    <key keyType="regional" keyCodes="0x062E" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="756dp" />
+    <key keyType="regional" keyCodes="0x062D" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="864dp" />
+    <key keyType="regional" keyCodes="0x062C" keyWidth="108dp" keyHeight="108dp" keyTop="0dp" keyLeft="972dp" />
+  </area>
+
+  <area>
+    <key keyType="regional" keyCodes="0x0633, 0x0634" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="0dp" />
+    <key keyType="regional" keyCodes="0x064A" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="108dp" />
+    <key keyType="regional" keyCodes="0x0628" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="216dp" />
+    <key keyType="regional" keyCodes="0x0644" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="324dp" />
+    <key keyType="regional" keyCodes="0x0627" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="432dp" />
+    <key keyType="regional" keyCodes="0x062A" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="540dp" />
+    <key keyType="regional" keyCodes="0x0646" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="648dp" />
+    <key keyType="regional" keyCodes="0x0645" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="756dp" />
+    <key keyType="regional" keyCodes="0x0643" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="864dp" />
+    <key keyType="function" keyCodes="0x21E6" keyName="ET9KEY_BACK" keyWidth="108dp" keyHeight="108dp" keyTop="108dp" keyLeft="972dp" />
+  </area>
+
+  <area>
+    <key keyType="function" keyLabel="ALT" keyName="ET9KEY_ALT" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="0dp" />
+    <key keyType="regional" keyCodes="0x0630" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="108dp" />
+    <key keyType="regional" keyCodes="0x062F" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="216dp" />
+    <key keyType="regional" keyCodes="0x0632" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="324dp" />
+    <key keyType="regional" keyCodes="0x0631" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="432dp" />
+    <key keyType="regional" keyCodes="0x0629" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="540dp" />
+    <key keyType="regional" keyCodes="0x0648" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="648dp" />
+    <key keyType="regional" keyCodes="0x0638" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="756dp" />
+    <key keyType="regional" keyCodes="0x0637" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="864dp" />
+    <key keyType="function" keyLabel="DONE" keyName="ET9KEY_RETURN" keyWidth="108dp" keyHeight="108dp" keyTop="216dp" keyLeft="972dp" />
+  </area>
+</keyboard >

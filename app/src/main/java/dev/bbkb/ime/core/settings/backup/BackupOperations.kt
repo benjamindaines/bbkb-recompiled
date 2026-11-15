@@ -1,0 +1,406 @@
+package dev.bbkb.ime.core.settings.backup
+
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import androidx.core.util.AtomicFile
+import dev.bbkb.ime.BuildConfig
+import dev.bbkb.ime.core.device.config.parser.DeviceInputMappingParser
+import dev.bbkb.ime.core.engine.NuanceSDKManager
+import dev.bbkb.ime.core.engine.engineLoaderDispatcher
+import dev.bbkb.ime.core.layout.LetterLayoutRegistry
+import dev.bbkb.ime.core.layout.LetterLayoutXml
+import dev.bbkb.ime.core.locale.SubtypeManager
+import dev.bbkb.ime.core.settings.PrefsManager
+import dev.bbkb.ime.core.settings.data.DictionaryEntry
+import dev.bbkb.ime.core.settings.data.DictionaryRepository
+import dev.bbkb.ime.core.shared.Logger
+import dev.bbkb.ime.personaldictionary.macro.CustomMacroRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.FilterOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.Locale
+
+/**
+ * Capture, restore and reset of the [BackupBundle.Part]s on the phone ([BackupBundle] owns the file).
+ * Restore order: device profiles and letter layouts (files) first so a failure leaves prefs
+ * untouched; settings and macros; layout editors on main (they clear `KeyboardBuilder`'s cache);
+ * the dictionary via [DictionaryRepository] (copying its files would be undone by the system sync);
+ * learned words last, only with the engine up. Settings, macros and layouts replace; dictionary
+ * entries and learned words are only ever added.
+ */
+object BackupOperations {
+
+    private const val TAG = "BackupOperations"
+
+    /** `CustomDeviceConfigManager`'s folder of imported profiles under `files/`. */
+    private const val DEVICE_CONFIG_DIR = "device_configs"
+
+    /** What a restore did, for the summary shown afterwards. */
+    class RestoreReport {
+        var settings: Int = 0
+        var macros: Int = 0
+        var deviceConfigs: Int = 0
+        var layoutSections: Int = 0
+        var letterLayouts: Int = 0
+        var dictionaryAdded: Int = 0
+        var learnedAdded: Int = 0
+        /** The bundle carried learned words but the engine was not running to take them. */
+        var learnedSkipped: Boolean = false
+
+        val restoredSettings: Boolean get() = settings > 0 || macros > 0 || deviceConfigs > 0
+        val restoredLayouts: Boolean get() = layoutSections > 0 || letterLayouts > 0
+        val restoredWords: Boolean get() = dictionaryAdded > 0 || learnedAdded > 0
+    }
+
+    sealed interface ReadResult {
+        class Ok(val bundle: BackupBundle.Bundle) : ReadResult
+        class NotABackup(val message: String) : ReadResult
+        object Unreadable : ReadResult
+    }
+
+    /**
+     * The selected parts, serialized. Learned words are included only when the engine is running
+     * with its model; otherwise the words part carries the dictionary alone.
+     */
+    suspend fun capture(context: Context, selection: BackupBundle.Selection): BackupBundle.Contents =
+        withContext(Dispatchers.IO) {
+            val app = context.applicationContext
+            val prefs = PrefsManager.getPrefs(app)
+            val settingsJson = if (selection.settings) {
+                SettingsBackup.serialize(prefs, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE,
+                    excludeKeys = LayoutsBundle.PREF_KEYS)
+            } else null
+            val macrosJson = if (selection.settings) {
+                CustomMacroRepository(app).getAllMacros().takeIf { it.isNotEmpty() }?.let { MacrosBundle.serialize(it) }
+            } else null
+            val deviceConfigs = if (selection.settings) captureDeviceConfigs(app) else emptyList()
+            val layoutsJson = if (selection.layouts) {
+                LayoutsBundle.serialize(LayoutsBundle.capture(app), BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+            } else null
+            val letterLayouts = if (selection.layouts) captureLetterLayouts(app) else emptyList()
+            val wordsJson = if (selection.words) {
+                val words = WordsBundle.Words(
+                    dictionary = dictionaryEntries(app),
+                    learnedWords = learnedWords(),
+                )
+                WordsBundle.serialize(words, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+            } else null
+            BackupBundle.Contents(
+                settingsJson = settingsJson,
+                macrosJson = macrosJson,
+                deviceConfigs = deviceConfigs,
+                layoutsJson = layoutsJson,
+                wordsJson = wordsJson,
+                letterLayouts = letterLayouts,
+            )
+        }
+
+    /** Re-serialized from the parsed form, not copied, so one unparsable file cannot spoil the bundle. */
+    private fun captureLetterLayouts(context: Context): List<BackupBundle.LetterLayoutFile> =
+        LetterLayoutRegistry(context).list()
+            .sortedBy { it.id }
+            .take(BackupBundle.MAX_LETTER_LAYOUTS)
+            .map { layout ->
+                BackupBundle.LetterLayoutFile(
+                    layout.id + LetterLayoutXml.FILE_SUFFIX,
+                    LetterLayoutXml.serialize(layout).toByteArray(Charsets.UTF_8),
+                )
+            }
+
+    private fun captureDeviceConfigs(context: Context): List<BackupBundle.DeviceConfigFile> {
+        val dir = File(context.filesDir, DEVICE_CONFIG_DIR)
+        val files = dir.listFiles { f -> f.isFile && f.name.lowercase(Locale.ROOT).endsWith(".xml") } ?: return emptyList()
+        return files.sortedBy { it.name }
+            .filter { it.length() <= BackupBundle.MAX_DEVICE_CONFIG_BYTES }
+            .take(BackupBundle.MAX_DEVICE_CONFIGS)
+            .mapNotNull { file ->
+                try {
+                    BackupBundle.DeviceConfigFile(file.name, file.readBytes())
+                } catch (e: IOException) {
+                    Logger.warn(TAG, "skipping device profile ${file.name}: $e")
+                    null
+                }
+            }
+    }
+
+    /** Every dictionary entry across locales, deduplicated. */
+    private suspend fun dictionaryEntries(context: Context): List<DictionaryEntry> {
+        val repository = DictionaryRepository(context)
+        repository.initialize()
+        if (!repository.isLoaded()) return emptyList()
+        val locales = LinkedHashSet(repository.getLocales()).apply { add("") }
+        val seen = HashSet<String>()
+        val entries = ArrayList<DictionaryEntry>()
+        for (locale in locales) {
+            repository.getAllEntries(locale).forEach { entry ->
+                if (seen.add(entryKey(entry))) entries += entry.copy(id = null)
+            }
+        }
+        return entries
+    }
+
+    private fun entryKey(entry: DictionaryEntry): String = entry.locale + "\u0000" + entry.displayKey
+
+    /**
+     * The engine's learned words, or null when the engine is not running with its model. Runs on
+     * the engine's loader thread: an IO thread can exit, so it must never call the engine.
+     */
+    private suspend fun learnedWords(): List<String>? = withContext(engineLoaderDispatcher) {
+        val sdk = NuanceSDKManager.peekInstance()
+        if (sdk == null || !sdk.isDLMReady()) return@withContext null
+        try {
+            sdk.getDLMWords().filter { it.isNotEmpty() && it.length <= WordsBundle.MAX_WORD_LENGTH }
+        } catch (e: RuntimeException) {
+            Logger.warn(TAG, "learned words unavailable: $e")
+            null
+        }
+    }
+
+    fun deviceInfo(): BackupBundle.DeviceInfo = BackupBundle.DeviceInfo(Build.MANUFACTURER, Build.MODEL)
+
+    /** Writes the selected parts to [uri]; false if storage refused. */
+    suspend fun writeTo(context: Context, uri: Uri, selection: BackupBundle.Selection): Boolean {
+        val contents = capture(context, selection)
+        return withContext(Dispatchers.IO) {
+            try {
+                val stream = context.contentResolver.openOutputStream(uri, "wt")
+                    ?: throw IOException("no output stream for $uri")
+                writeTo(stream, contents)
+                true
+            } catch (e: IOException) {
+                Logger.warn(TAG, "backup not written: $e")
+                false
+            } catch (e: SecurityException) {
+                Logger.warn(TAG, "backup not written: $e")
+                false
+            }
+        }
+    }
+
+    /**
+     * Writes [contents] to [file] atomically via [AtomicFile]: the phone-backup helper reads
+     * `backup/auto.zip` directly and must find a whole bundle even after a crash.
+     */
+    @Throws(IOException::class)
+    fun writeTo(file: File, contents: BackupBundle.Contents) {
+        val dir = file.parentFile ?: throw IOException("no parent for $file")
+        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("could not create $dir")
+        val atomic = AtomicFile(file)
+        var out: FileOutputStream? = null
+        try {
+            out = atomic.startWrite()
+            // BackupBundle.write closes its stream, but finishWrite must sync before close.
+            writeTo(KeepOpenOutputStream(out), contents)
+            atomic.finishWrite(out)
+        } catch (e: IOException) {
+            atomic.failWrite(out)
+            throw e
+        } catch (e: RuntimeException) {
+            atomic.failWrite(out)
+            throw e
+        }
+        // finishWrite only logs a failed rename, which leaves the bundle in the .new file.
+        val pending = File(file.path + ".new")
+        if (pending.exists()) {
+            pending.delete()
+            throw IOException("could not move $pending into place")
+        }
+    }
+
+    /** [close] only flushes, leaving [target] open. */
+    private class KeepOpenOutputStream(target: OutputStream) : FilterOutputStream(target) {
+        override fun write(b: ByteArray, off: Int, len: Int) = out.write(b, off, len)
+        override fun close() = out.flush()
+    }
+
+    @Throws(IOException::class)
+    private fun writeTo(stream: OutputStream, contents: BackupBundle.Contents) {
+        BackupBundle.write(stream, contents, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, deviceInfo())
+    }
+
+    /** Reads and validates the document at [uri]; nothing is applied. */
+    suspend fun readFrom(context: Context, uri: Uri): ReadResult = withContext(Dispatchers.IO) {
+        try {
+            val stream = context.contentResolver.openInputStream(uri)
+                ?: throw IOException("no input stream for $uri")
+            stream.use { readFrom(it) }
+        } catch (e: IOException) {
+            Logger.warn(TAG, "backup not read: $e")
+            ReadResult.Unreadable
+        } catch (e: SecurityException) {
+            Logger.warn(TAG, "backup not read: $e")
+            ReadResult.Unreadable
+        }
+    }
+
+    @Throws(IOException::class)
+    fun readFrom(stream: InputStream): ReadResult {
+        val result = BackupBundle.read(stream)
+        val bundle = result.getOrNull() ?: return ReadResult.NotABackup(result.exceptionOrNull()?.message ?: "not a BBKB backup")
+        return ReadResult.Ok(bundle)
+    }
+
+    /** Applies the parts [selection] asks for that [bundle] has. */
+    suspend fun restore(context: Context, bundle: BackupBundle.Bundle, selection: BackupBundle.Selection): RestoreReport {
+        val app = context.applicationContext
+        val report = RestoreReport()
+        val wanted = selection.limitedTo(bundle)
+
+        withContext(Dispatchers.IO) {
+            if (wanted.settings) {
+                report.deviceConfigs = restoreDeviceConfigs(app, bundle.deviceConfigs)
+            }
+            if (wanted.layouts && bundle.letterLayouts.isNotEmpty()) {
+                // Added or replaced by id, never switched on.
+                val registry = LetterLayoutRegistry(app)
+                bundle.letterLayouts.forEach { registry.save(it) }
+                report.letterLayouts = bundle.letterLayouts.size
+            }
+            if (wanted.settings) {
+                bundle.settings?.let {
+                    // Layout keys belong to the Layouts part, restored or not.
+                    report.settings = SettingsBackup.apply(PrefsManager.getPrefs(app), it,
+                        replace = true, keepKeys = LayoutsBundle.PREF_KEYS)
+                }
+                bundle.macros?.let {
+                    CustomMacroRepository(app).replaceAll(it)
+                    report.macros = it.size
+                }
+            }
+        }
+        if (wanted.layouts) {
+            bundle.layouts?.let { layouts ->
+                withContext(Dispatchers.Main) { report.layoutSections = LayoutsBundle.applyEditors(app, layouts) }
+            }
+        }
+        if (wanted.words) {
+            bundle.words?.let { words ->
+                withContext(Dispatchers.IO) {
+                    words.dictionary?.let { report.dictionaryAdded = restoreDictionary(app, it) }
+                    words.learnedWords?.let { learned ->
+                        val added = restoreLearnedWords(learned)
+                        if (added == null) report.learnedSkipped = true else report.learnedAdded = added
+                    }
+                }
+            }
+        }
+        AutoBackup.noteDataChanged(app)
+        return report
+    }
+
+    /** Writes each profile into the imported-profiles folder, replacing same-named files. */
+    private fun restoreDeviceConfigs(context: Context, configs: List<BackupBundle.DeviceConfigFile>): Int {
+        if (configs.isEmpty()) return 0
+        val dir = File(context.filesDir, DEVICE_CONFIG_DIR)
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            Logger.warn(TAG, "could not create $dir")
+            return 0
+        }
+        var written = 0
+        configs.forEach { config ->
+            // The reader already sanitized the name. Parse first so a non-profile XML never
+            // lands in the folder the profile loader scans.
+            if (DeviceInputMappingParser.parseConfigFromStream(ByteArrayInputStream(config.xml)) == null) {
+                Logger.warn(TAG, "skipping device profile ${config.name}: not a device config")
+                return@forEach
+            }
+            try {
+                File(dir, config.name).writeBytes(config.xml)
+                written++
+            } catch (e: IOException) {
+                Logger.warn(TAG, "device profile ${config.name} not written: $e")
+            }
+        }
+        return written
+    }
+
+    private suspend fun restoreDictionary(context: Context, entries: List<DictionaryEntry>): Int {
+        val repository = DictionaryRepository(context)
+        repository.initialize()
+        if (!repository.isLoaded()) {
+            Logger.warn(TAG, "dictionary not loaded; its words were not restored")
+            return 0
+        }
+        val existing = HashSet<String>()
+        val locales = LinkedHashSet(repository.getLocales()).apply { add("") }
+        for (locale in locales) {
+            repository.getAllEntries(locale).forEach { existing += entryKey(it) }
+        }
+        var added = 0
+        entries.forEach { entry ->
+            if (entryKey(entry) in existing) return@forEach
+            if (repository.addEntry(entry).isSuccess) added++
+        }
+        return added
+    }
+
+    /** Teaches the engine each new word; null without the engine. Loader thread, as [learnedWords]. */
+    private suspend fun restoreLearnedWords(words: List<String>): Int? = withContext(engineLoaderDispatcher) {
+        val sdk = NuanceSDKManager.peekInstance()
+        if (sdk == null || !sdk.isDLMReady()) return@withContext null
+        val known = try {
+            sdk.getDLMWords().toHashSet()
+        } catch (e: RuntimeException) {
+            HashSet<String>()
+        }
+        var added = 0
+        words.forEach { word ->
+            if (word in known) return@forEach
+            if (sdk.addWord(word)) added++
+        }
+        added
+    }
+
+    /** Puts the selected parts back to a fresh install's state. */
+    suspend fun reset(context: Context, selection: BackupBundle.Selection) {
+        val app = context.applicationContext
+        if (selection.settings) {
+            withContext(Dispatchers.IO) {
+                val prefs = PrefsManager.getPrefs(app)
+                val editor = prefs.edit()
+                prefs.all.keys.forEach { key -> if (key !in LayoutsBundle.PREF_KEYS) editor.remove(key) }
+                editor.apply()
+                CustomMacroRepository(app).replaceAll(emptyList())
+            }
+            // Rebuild the subtype list from the phone's languages so the keyboard is not left with none.
+            SubtypeManager.ensureInitialized(app)
+        }
+        if (selection.layouts) {
+            withContext(Dispatchers.IO) {
+                val registry = LetterLayoutRegistry(app)
+                registry.list().forEach { registry.delete(it.id) }
+            }
+            withContext(Dispatchers.Main) { LayoutsBundle.resetEditors(app) }
+        }
+        if (selection.words) {
+            withContext(Dispatchers.IO) {
+                val repository = DictionaryRepository(app)
+                repository.initialize()
+                if (repository.isLoaded()) {
+                    val locales = LinkedHashSet(repository.getLocales()).apply { add("") }
+                    for (locale in locales) {
+                        repository.getAllEntries(locale).forEach { repository.deleteEntry(it) }
+                    }
+                }
+            }
+            // A long engine hold: on the loader thread.
+            withContext(engineLoaderDispatcher) {
+                NuanceSDKManager.getInstance()?.let { sdk ->
+                    try {
+                        sdk.resetDynamicModel(File(app.filesDir, "nuance"))
+                    } catch (e: RuntimeException) {
+                        Logger.warn(TAG, "learned words not reset: $e")
+                    }
+                }
+            }
+        }
+        AutoBackup.noteDataChanged(app)
+    }
+}

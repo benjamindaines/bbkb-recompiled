@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Any BlackBerry-branded device; no input mappings, Alt characters come from the firmware KCM -->
+
+<device-input-config version="2.1" name="Other BlackBerry keyboard phones">
+
+    <device>
+        <match>
+            <brand exact="blackberry"/>
+        </match>
+        <!-- Firmware delivers every key, so the helper is disabled (also hides it from Accessibility settings) -->
+        <accessibility-helper>off</accessibility-helper>
+    </device>
+
+</device-input-config>

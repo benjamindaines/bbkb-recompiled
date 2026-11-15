@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unihertz Titan 2: 35-key "TitanKey" keypad plus "touchPad" (1440x720); facts from published studies, not a unit -->
+
+<device-input-config version="2.1" name="Unihertz Titan 2">
+
+    <device>
+        <match>
+            <!-- The Elite reports the same device; board G71BoardV1 here, G72BoardV1 on the Elite -->
+            <build-device exact="Titan_2"/>
+            <board exact="G71BoardV1"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <!-- Sold in one layout; declared so user letter maps bind without live detection -->
+        <keypad-layout>qwerty</keypad-layout>
+
+        <!-- Android 16 hands pad events to a focused IME (Scroll assistant on); Android 15 needs Shizuku. "sub_touch" is the rear screen. No kdb-variant: swipe off -->
+        <touch-keypad range-x="1440" range-y="720" contacts="single" native-min-sdk="36" source="auto">
+            <input-device exact="touchPad"/>
+        </touch-keypad>
+
+        <input-mappings>
+            <alt-mappings>
+                <source>device_alt_mappings_titan2</source>
+                <enabled>true</enabled>
+            </alt-mappings>
+
+            <scancode-mappings>
+
+                <!-- Sym (scancode 253) arrives as KEYCODE_SYM. -->
+                <key rawScanCode="253" role="BOARD_SYM"
+                     treatAs="KEYCODE_SYM" notes="Titan 2 Sym key"/>
+
+                <!-- Fn (251) is Ctrl; declaring it keeps the interceptor table from reading it as the Minimal Phone Mic key -->
+                <key rawScanCode="251" role="MODIFIER"
+                     treatAs="KEYCODE_CTRL_LEFT" notes="Titan 2 Fn key, Ctrl-like"/>
+
+                <!-- OEM programmable keys (vendor policy takes them); no board, so not read as Minimal Phone Sym/Emoji -->
+                <key rawScanCode="249" role="FUNCTION" notes="Titan 2 Func1 (programmable)"/>
+                <key rawScanCode="250" role="FUNCTION" notes="Titan 2 Func2 (programmable)"/>
+
+                <!-- Alt (scancode 100) arrives as ALT_RIGHT, which the modifier tracker already
+                     treats as Alt; declared so the key's role is on record. -->
+                <key rawScanCode="100" role="MODIFIER"
+                     treatAs="KEYCODE_ALT_RIGHT" notes="Titan 2 Alt key (ALT_RIGHT)"/>
+
+                <!-- Firmware swipe-left key (322 on Android 15, 404 on 16, needs "swipe to turn on keyboard light"): a swipe left, never typed -->
+                <key rawKeyCode="322" role="GESTURE_SWIPE_LEFT"
+                     notes="Titan 2 firmware swipe-left key (Android 15)"/>
+                <key rawKeyCode="404" role="GESTURE_SWIPE_LEFT"
+                     notes="Titan 2 firmware swipe-left key (Android 16)"/>
+
+            </scancode-mappings>
+        </input-mappings>
+
+        <settings-overrides>
+            <!-- The OEM Cursor assistant owns double-tap: default the slot to no action -->
+            <setting key="ckb_gesture_double_tap" type="string" default-value="none"/>
+        </settings-overrides>
+    </device>
+
+</device-input-config>

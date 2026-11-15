@@ -1,0 +1,259 @@
+package dev.bbkb.ime.core.settings.screens
+
+import android.content.Context
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import dev.bbkb.ime.core.device.detection.KeypadLayoutDetector
+import dev.bbkb.ime.core.locale.ResourceLocaleUtils
+import dev.bbkb.ime.core.device.profile.DeviceProfile
+import dev.bbkb.ime.core.keyevent.AltSymShortcutHandler
+import dev.bbkb.ime.core.keyevent.MultifunctionKeyHandler
+import dev.bbkb.ime.core.locale.LocaleUtils
+import dev.bbkb.ime.core.settings.util.SettingsManager
+import dev.bbkb.ime.core.settings.search.settingsSearchAnchor
+import dev.bbkb.ime.core.settings.ui.Category
+import dev.bbkb.ime.core.settings.ui.Choice
+import dev.bbkb.ime.core.settings.ui.ChoiceOption
+import dev.bbkb.ime.core.settings.ui.Custom
+import dev.bbkb.ime.core.settings.ui.ManagedToggle
+import dev.bbkb.ime.core.settings.ui.Nav
+import dev.bbkb.ime.core.settings.ui.PrefStore
+import dev.bbkb.ime.core.settings.ui.RowSummary
+import dev.bbkb.ime.core.settings.ui.drawableIcon
+import dev.bbkb.ime.core.settings.ui.SettingsScreenHost
+import dev.bbkb.ime.core.settings.ui.Toggle
+import dev.bbkb.ime.core.settings.ui.boolPref
+import dev.bbkb.ime.core.settings.ui.stringPref
+import dev.bbkb.ime.R
+
+private const val CKB_GESTURES = "ckb_gestures_enabled"
+
+@Composable
+fun PhysicalKeyboardScreen(
+    onNavigateBack: () -> Unit,
+    onNavigateToCkbGestures: () -> Unit = {},
+    onNavigateToTouchSurfaceHelper: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val hasTouchKeypad = remember { DeviceProfile.current()?.hasTouchKeypad() ?: false }
+    // A declared touch surface whose events cannot reach BBKB yet still shows the category, with
+    // the row that leads to setup.
+    val touchSurface = rememberTouchSurfaceState()
+    val hasPhysicalKeyboard = remember { DeviceProfile.current()?.hasPhysicalKeyboard() ?: false }
+    // Athena has no key to assign as Ctrl (its Ctrl is the Alt+Sym / multifunction choice).
+    val isAthena = remember { DeviceProfile.current()?.deviceMapping?.kdbVariant == "athena" }
+    val isChineseLocale = remember { LocaleUtils.isCurrentSubtypeChinese() }
+
+    // Only where the device config declares a MULTIFUNCTION key
+    val multifunctionKeyMapping = remember {
+        DeviceProfile.current()?.getDeviceMapping()?.getMultifunctionKeyMapping()
+    }
+    val multifunctionDefault = MultifunctionKeyHandler.upgradeLegacyAction(multifunctionKeyMapping?.defaultAction)
+        ?.takeIf { it.isNotEmpty() } ?: MultifunctionKeyHandler.DEFAULT_ACTION
+
+    // Keys declared in strings.xml, resolved through the same resource the app reads.
+    val modifierStatusIconKey = context.getString(R.string.pref_show_pkb_modifier_status_icon_key)
+    val shiftDoubleTapLockKey = context.getString(R.string.pref_shift_double_tap_lock_key)
+    val altDoubleTapLockKey = context.getString(R.string.pref_alt_double_tap_lock_key)
+    val ctrlDoubleTapLockKey = context.getString(R.string.pref_ctrl_double_tap_lock_key)
+
+    SettingsScreenHost(R.string.settings_physical_keyboard_title, onNavigateBack, listOf(
+        Category(R.string.settings_category_keys),
+        Toggle(
+            store = boolPref("pref_voice_input_key", true),
+            title = R.string.settings_pkb_dictation_key_title,
+            icon = drawableIcon(R.drawable.ic_settings_dictation_key),
+            summary = RowSummary.OnOff(
+                R.string.settings_pkb_dictation_key_summary_on,
+                R.string.settings_pkb_dictation_key_summary_off,
+            ),
+            modifier = Modifier.settingsSearchAnchor("pref_voice_input_key"),
+        ),
+        // Typing with the emoji board open filters it (KeyEventProcessor routes keys into its
+        // search field); off, keys type into the editor.
+        Toggle(
+            store = boolPref("pref_pkb_emoji_search", true),
+            title = R.string.pref_emoji_search_title,
+            icon = drawableIcon(R.drawable.ic_settings_emoji_search),
+            summary = RowSummary.Res(R.string.pref_emoji_search_pkb_summary),
+            modifier = Modifier.settingsSearchAnchor("pref_pkb_emoji_search"),
+        ),
+        Choice(
+            store = multifunctionStore(multifunctionDefault),
+            title = R.string.settings_pkb_multifunction_key_title,
+            icon = drawableIcon(R.drawable.ic_settings_multifunction_key),
+            options = ::multifunctionActions,
+            // Emoji board: the fallback default action.
+            fallbackIndex = 1,
+            // Literal (== MultifunctionKeyHandler.PREF_KEY): the search-index sync test scans for it.
+            modifier = Modifier.settingsSearchAnchor("pref_multifunction_key_action"),
+            visible = { multifunctionKeyMapping != null },
+        ),
+        Choice(
+            store = stringPref("pref_alt_sym_shortcut_action", "disabled"),
+            title = R.string.settings_pkb_alt_sym_shortcut_title,
+            icon = drawableIcon(R.drawable.ic_settings_altsym),
+            options = ::altSymActions,
+            modifier = Modifier.settingsSearchAnchor("pref_alt_sym_shortcut_action"),
+        ),
+        Choice(
+            store = stringPref("pref_pkb_hold_auto_commit", "off"),
+            title = R.string.settings_pkb_hold_action_title,
+            icon = drawableIcon(R.drawable.ic_settings_hold_action),
+            options = ::holdActions,
+            // Summary uses a different resource from the dialog label.
+            summary = ::holdActionSummary,
+            modifier = Modifier.settingsSearchAnchor("pref_pkb_hold_auto_commit"),
+        ),
+        Choice(
+            store = stringPref("control_mode", "2"),
+            title = R.string.settings_pkb_ctrl_key_behavior_title,
+            icon = drawableIcon(R.drawable.ic_settings_ctrl_key),
+            options = ::controlModes,
+            fallbackIndex = 2,
+            modifier = Modifier.settingsSearchAnchor("control_mode"),
+            visible = { !isAthena },
+        ),
+        // Keypad shape for models sold in several: automatic detection or the user's choice.
+        Choice(
+            store = stringPref(DeviceProfile.PREF_KEYPAD_LAYOUT, ""),
+            title = R.string.settings_pkb_keypad_layout_title,
+            icon = drawableIcon(R.drawable.ic_settings_keypad_layout),
+            options = ::keypadLayouts,
+            modifier = Modifier.settingsSearchAnchor("pref_pkb_keypad_layout"),
+            visible = { hasPhysicalKeyboard && (DeviceProfile.current()?.keypadLayoutOptions?.size ?: 0) > 1 },
+        ),
+
+        Category(R.string.settings_category_ckb_gestures, visible = { hasTouchKeypad || touchSurface.declared }),
+        // Link to the Touch surface helper, with the same live status line.
+        Nav(
+            title = R.string.touch_surface_link_title,
+            icon = drawableIcon(R.drawable.ic_settings_m_touch_app),
+            summaryText = { ctx ->
+                ctx.getString(R.string.touch_surface_link_summary, ctx.getString(touchSurface.statusLine))
+            },
+            visible = { touchSurface.declared },
+            onClick = { onNavigateToTouchSurfaceHelper() },
+        ),
+        ManagedToggle(
+            store = boolPref("type_by_swiping_ckb", false),
+            title = R.string.settings_screen_type_by_swiping,
+            icon = drawableIcon(R.drawable.ic_settings_swipe_typing),
+            summary = RowSummary.Res(R.string.settings_screen_type_by_swiping_summary),
+            enabled = { !isChineseLocale },
+            visible = { hasTouchKeypad },
+        ),
+        Custom(visible = { hasTouchKeypad && isChineseLocale }) { ChineseLocaleSwipeWarning() },
+        ManagedToggle(
+            store = boolPref(CKB_GESTURES, true),
+            title = R.string.ckb_gestures_enable_title,
+            icon = drawableIcon(R.drawable.ic_settings_gesture_ckb),
+            summary = RowSummary.Res(R.string.ckb_gestures_enable_summary),
+            visible = { hasTouchKeypad },
+        ),
+        Nav(
+            title = R.string.ckb_gestures_configure_title,
+            icon = drawableIcon(R.drawable.ic_settings_gesture_ckb_configure),
+            summary = R.string.ckb_gestures_configure_summary,
+            // Enabled while gestures are off so assignments can be made first.
+            visible = { hasTouchKeypad },
+            onClick = { onNavigateToCkbGestures() },
+        ),
+
+        Category(R.string.settings_category_modifiers),
+        Toggle(
+            store = boolPref(modifierStatusIconKey, true),
+            title = R.string.pref_show_pkb_modifier_status_icon,
+            icon = drawableIcon(R.drawable.ic_settings_modifier_icons),
+            summary = RowSummary.Res(R.string.pref_show_pkb_modifier_status_icon_summary),
+            modifier = Modifier.settingsSearchAnchor("pref_show_pkb_modifier_status_icon"),
+        ),
+
+        // The header explains the locks, so each row is only the key's name.
+        Category(R.string.settings_category_press_twice_lock),
+        Toggle(
+            store = boolPref(shiftDoubleTapLockKey, true),
+            title = R.string.pref_lock_row_shift,
+            icon = drawableIcon(R.drawable.ic_settings_shift_lock),
+            modifier = Modifier.settingsSearchAnchor("pref_shift_double_tap_lock"),
+        ),
+        Toggle(
+            store = boolPref(altDoubleTapLockKey, true),
+            title = R.string.pref_lock_row_alt,
+            icon = drawableIcon(R.drawable.ic_settings_alt_lock),
+            modifier = Modifier.settingsSearchAnchor("pref_alt_double_tap_lock"),
+        ),
+        Toggle(
+            store = boolPref(ctrlDoubleTapLockKey, true),
+            title = R.string.pref_lock_row_ctrl,
+            icon = drawableIcon(R.drawable.ic_settings_ctrl_lock),
+            modifier = Modifier.settingsSearchAnchor("pref_ctrl_double_tap_lock"),
+        ),
+    ))
+}
+
+/** An empty stored action means "unset" and falls back to the device mapping's default. */
+private fun multifunctionStore(default: String) = PrefStore(
+    MultifunctionKeyHandler.PREF_KEY,
+    { prefs, _ ->
+        MultifunctionKeyHandler.upgradeLegacyAction(prefs.getString(MultifunctionKeyHandler.PREF_KEY, ""))
+            ?.takeIf { it.isNotEmpty() } ?: default
+    },
+    { editor, value -> editor.putString(MultifunctionKeyHandler.PREF_KEY, value) },
+)
+
+private fun controlModes(context: Context) = listOf(
+    ChoiceOption("0", context.getString(R.string.control_key_setting_right_shift)),
+    ChoiceOption("1", context.getString(R.string.control_key_setting_left_shift)),
+    ChoiceOption("2", context.getString(R.string.control_key_setting_off)),
+)
+
+private fun multifunctionActions(context: Context) = listOf(
+    ChoiceOption(MultifunctionKeyHandler.ACTION_CTRL, context.getString(R.string.settings_pkb_multifunction_action_ctrl)),
+) + sharedShortcutActions(context)
+
+/**
+ * Actions shared by the multifunction key and the Alt+Sym shortcut, after each one's own first
+ * entry (Ctrl for the key, Disabled for the shortcut).
+ */
+private fun sharedShortcutActions(context: Context) = listOf(
+    MultifunctionKeyHandler.ACTION_EMOJI_BOARD to R.string.settings_pkb_multifunction_action_emoji,
+    MultifunctionKeyHandler.ACTION_CLIPBOARD_BOARD to R.string.settings_pkb_multifunction_action_clipboard,
+    MultifunctionKeyHandler.ACTION_FCC to R.string.settings_pkb_multifunction_action_fcc,
+    MultifunctionKeyHandler.ACTION_NUMBER_PAD to R.string.settings_pkb_multifunction_action_number_pad,
+    MultifunctionKeyHandler.ACTION_LANGUAGE_SWITCH to R.string.settings_pkb_multifunction_action_language_switch,
+    MultifunctionKeyHandler.ACTION_LANGUAGE_QUICK_SWITCH to R.string.settings_pkb_multifunction_action_language_quick_switch,
+    MultifunctionKeyHandler.ACTION_SYMBOL_KEYBOARD to R.string.settings_pkb_multifunction_action_symbol,
+    // Reaches the menu where "Show the suggestion bar" leaves no hamburger button to tap.
+    MultifunctionKeyHandler.ACTION_TOGGLE_UIM to R.string.settings_pkb_multifunction_action_input_menu,
+).map { (value, label) -> ChoiceOption(value, context.getString(label)) }
+
+/** Automatic (with what detection found) first, then each shape the device config lists. */
+private fun keypadLayouts(context: Context): List<ChoiceOption> {
+    val profile = DeviceProfile.current()
+    val detected = profile?.detectedKeypadLayout ?: KeypadLayoutDetector.QWERTY
+    fun name(layout: String) = ResourceLocaleUtils.getKeyboardLayoutSetDisplayName(layout) ?: layout.uppercase()
+    return listOf(ChoiceOption("", context.getString(R.string.settings_pkb_keypad_layout_automatic, name(detected)))) +
+        profile?.keypadLayoutOptions.orEmpty().map { ChoiceOption(it, name(it)) }
+}
+
+private fun holdActions(context: Context) = listOf(
+    ChoiceOption("off", context.getString(R.string.settings_pkb_hold_action_off)),
+    ChoiceOption("uppercase", context.getString(R.string.settings_pkb_hold_action_uppercase)),
+    ChoiceOption("symbol", context.getString(R.string.settings_pkb_hold_action_symbol)),
+)
+
+private fun holdActionSummary(context: Context, value: String): String = context.getString(
+    when (value) {
+        "uppercase" -> R.string.settings_pkb_hold_action_uppercase_summary
+        "symbol" -> R.string.settings_pkb_hold_action_symbol_summary
+        else -> R.string.settings_pkb_hold_action_off_summary
+    }
+)
+
+private fun altSymActions(context: Context) = listOf(
+    ChoiceOption(AltSymShortcutHandler.ACTION_DISABLED, context.getString(R.string.settings_pkb_alt_sym_shortcut_disabled)),
+    ChoiceOption(AltSymShortcutHandler.ACTION_CTRL, context.getString(R.string.settings_pkb_multifunction_action_ctrl)),
+) + sharedShortcutActions(context)

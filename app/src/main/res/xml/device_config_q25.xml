@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Device Configuration: Zinwa Q25
+    Schema v2.1
+
+    Auto-selected when the device name matches "q25".
+
+    Find device name: adb shell dumpsys input
+-->
+
+<device-input-config version="2.1" name="Zinwa Q25">
+    
+    <device>
+        <match>
+            <device-name exact="q25"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <!-- Sold in one layout; declared so user letter maps bind without live detection -->
+        <keypad-layout>qwerty</keypad-layout>
+
+        <input-mappings>
+            
+            <keypad-type>4row</keypad-type>
+
+            <scancode-mappings>
+
+                <!-- No SYM entry. The ROM attaches KEYCODE_ALT_RIGHT (58) to the SYM key, so the
+                     key is left as an ordinary Alt modifier (chorded SYM+key produces alternate-layer
+                     glyphs). A lone SYM tap is detected in BlackBerryIME.onKeyUp, which toggles the
+                     symbol overlay without reinterpreting the key. A BOARD_SYM role here (keycode 58
+                     collides with a real Alt) would convert the press to -22 on the interceptor path
+                     and double-fire against the onKeyUp toggle. -->
+
+                <!-- Mic key: voice input; with Alt or in a numeric field it types 0 -->
+                <key rawKeyCode="7" role="BOARD_VOICE"
+                     treatAs="KEYCODE_MIC" altChar="0" board="-27"
+                     notes="BB mic key (keyCode=7), alt char is zero digit"/>
+
+            </scancode-mappings>
+        </input-mappings>
+        
+        <settings-overrides>
+            <setting key="type_by_swiping_ckb" type="boolean" forced-value="false" read-only="true"/>
+        </settings-overrides>
+    </device>
+
+</device-input-config>

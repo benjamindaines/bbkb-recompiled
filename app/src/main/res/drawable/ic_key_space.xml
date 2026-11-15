@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Center bar stretches between the legs -->
+    <item
+        android:left="2dp"
+        android:right="2dp"
+        android:height="2dp"
+        android:gravity="bottom|fill_horizontal"
+        android:drawable="@drawable/ic_key_space_center"/>
+    <item
+        android:width="2dp"
+        android:height="6dp"
+        android:gravity="left|bottom"
+        android:drawable="@drawable/ic_key_space_left"/>
+    <item
+        android:width="2dp"
+        android:height="6dp"
+        android:gravity="right|bottom"
+        android:drawable="@drawable/ic_key_space_right"/>
+</layer-list>

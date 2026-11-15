@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unihertz Titan (2019): "aw9523-key" keypad, red key on "mtk-kpd", "mtk-pad" touch; from stock files, unverified on a unit -->
+
+<device-input-config version="2.1" name="Unihertz Titan">
+
+    <device>
+        <match>
+            <!-- Manufacturer is the ODM A-gold; Pocket and Slim have their own configs -->
+            <manufacturer exact="A-gold"/>
+            <model exact="Titan"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <keypad-layout>qwerty</keypad-layout>
+
+        <!-- Unverified range (about 1440x720, from code constants). No kdb-variant: swipe off -->
+        <touch-keypad range-x="1440" range-y="720" contacts="single" source="auto">
+            <input-device exact="mtk-pad"/>
+        </touch-keypad>
+
+        <input-mappings>
+            <alt-mappings>
+                <source>device_alt_mappings_titan</source>
+                <enabled>true</enabled>
+            </alt-mappings>
+
+            <scancode-mappings>
+
+                <!-- No Sym key: the ROM opens its symbol panel with Alt+Space -->
+
+                <!-- Alt is RIGHTALT (scancode 100), which arrives as ALT_RIGHT; the keyboard also
+                     has LEFTCTRL and LEFTMETA, which need nothing from a config. -->
+                <key rawScanCode="100" role="MODIFIER"
+                     treatAs="KEYCODE_ALT_RIGHT" notes="Titan Alt key (RIGHTALT)"/>
+
+                <!-- Red side key: no board, so not read as Minimal Phone Sym/Emoji -->
+                <key rawScanCode="249" role="FUNCTION" notes="Titan red key (mtk-kpd)"/>
+                <key rawScanCode="250" role="FUNCTION" notes="Titan red key (mtk-kpd)"/>
+
+            </scancode-mappings>
+        </input-mappings>
+    </device>
+
+</device-input-config>
