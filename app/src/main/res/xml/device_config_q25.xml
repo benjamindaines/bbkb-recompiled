@@ -1,7 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Device Configuration: Zinwa Q25
+    Schema v2.1
+
+    Auto-selected when the input-device name matches "q25" (adb shell dumpsys input), OR when the
+    physical panel is the 720-wide near-square window (720x720 to 720x779). The resolution match is
+    read from the display's hardware modes, so it survives Build/input-device spoofing and a wm size
+    override; 720x720 on physical-keyboard hardware is effectively a one-of-one signature.
+
+    The two <device> blocks are alternative selectors for the SAME device and must keep their
+    input-mappings, device-type, keypad-layout and settings-overrides in sync. The parser collects
+    every <device>; the first whose <match> succeeds is used.
+-->
 
 <device-input-config version="2.1" name="Zinwa Q25">
-    
+
+    <!-- Selector 1: input-device name (the plain, non-spoofed case). -->
     <device>
         <match>
             <device-name exact="q25"/>
@@ -13,13 +27,17 @@
         <keypad-layout>qwerty</keypad-layout>
 
         <input-mappings>
-            
+
             <keypad-type>4row</keypad-type>
 
             <scancode-mappings>
 
-                <key rawKeyCode="58" role="BOARD_SYM"
-                     treatAs="KEYCODE_SYM" notes="BB SYM raw scancode"/>
+                <!-- No SYM entry. The ROM attaches KEYCODE_ALT_RIGHT (58) to the SYM key, so the
+                     key is left as an ordinary Alt modifier (chorded SYM+key produces alternate-layer
+                     glyphs). A lone SYM tap is detected in BlackBerryIME.onKeyUp, which toggles the
+                     symbol overlay without reinterpreting the key. A BOARD_SYM role here (keycode 58
+                     collides with a real Alt) would convert the press to -22 on the interceptor path
+                     and double-fire against the onKeyUp toggle. -->
 
                 <!-- Mic key: voice input; with Alt or in a numeric field it types 0 -->
                 <key rawKeyCode="7" role="BOARD_VOICE"
@@ -28,7 +46,36 @@
 
             </scancode-mappings>
         </input-mappings>
-        
+
+        <settings-overrides>
+            <setting key="type_by_swiping_ckb" type="boolean" forced-value="false" read-only="true"/>
+        </settings-overrides>
+    </device>
+
+    <!-- Selector 2: physical panel resolution, the spoof-resistant fallback. Mirrors selector 1. -->
+    <device>
+        <match>
+            <panel regex="^720x7[2-7][0-9]$"/>
+        </match>
+
+        <device-type>PKB</device-type>
+
+        <keypad-layout>qwerty</keypad-layout>
+
+        <input-mappings>
+
+            <keypad-type>4row</keypad-type>
+
+            <scancode-mappings>
+
+                <!-- Mic key: voice input; with Alt or in a numeric field it types 0 -->
+                <key rawKeyCode="7" role="BOARD_VOICE"
+                     treatAs="KEYCODE_MIC" altChar="0" board="-27"
+                     notes="BB mic key (keyCode=7), alt char is zero digit"/>
+
+            </scancode-mappings>
+        </input-mappings>
+
         <settings-overrides>
             <setting key="type_by_swiping_ckb" type="boolean" forced-value="false" read-only="true"/>
         </settings-overrides>

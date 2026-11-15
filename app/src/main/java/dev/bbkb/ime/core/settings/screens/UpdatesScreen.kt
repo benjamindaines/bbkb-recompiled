@@ -496,8 +496,8 @@ private fun StatusCardFrame(
 /** "Release", the override's channel name, or "no update channel for debug builds". */
 private fun channelSummary(context: Context, checker: UpdateChecker): String = when {
     !checker.hasChannel -> context.getString(R.string.settings_update_channel_none)
-    checker.channel == "release" -> context.getString(R.string.settings_update_channel_release)
-    // A debug build with pref_distribution_channel_override set: say which.
+    checker.channel == "none" -> context.getString(R.string.settings_update_channel_release)
+    // A debug build with pref_distribution_channel_override set to something else: say which.
     else -> checker.channel
 }
 

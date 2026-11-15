@@ -58,6 +58,12 @@ internal class KeyEditorSpec(
     val save: (Context, List<String>) -> Unit,
     /** Whether changing tab or applying a reset drops a pending palette selection. */
     val clearsSymbolSelectionOnContextChange: Boolean,
+    /**
+     * Whether this editor captures physical key presses to assign a pending palette symbol to the
+     * pressed key's position. Only the PKB symbol page has a fixed scancode-to-slot correspondence
+     * ([PkbSymbolKeyCapture]); the VKB page and the slideboard numpad do not.
+     */
+    val capturesPhysicalKeys: Boolean = false,
 )
 
 private fun symbolPageResets(isPkb: Boolean) = listOf(
@@ -82,6 +88,7 @@ private fun symbolPageSpec(isPkb: Boolean) = KeyEditorSpec(
     load = { c -> CustomSymbolRepository(c).loadLayout(isPkb) },
     save = { c, layout -> CustomSymbolRepository(c).saveLayout(isPkb, layout) },
     clearsSymbolSelectionOnContextChange = false,
+    capturesPhysicalKeys = isPkb,
 )
 
 /** On-screen keyboard: 26 editable slots, in rows of 10, 9 and 7. */

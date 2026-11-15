@@ -1,8 +1,13 @@
 package dev.bbkb.ime.core.settings.screens.keyeditor
 
 import android.app.Application
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -22,7 +27,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.clickable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -54,6 +58,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -66,13 +72,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.bbkb.ime.core.device.config.builder.HardwareKeyCaptureBus
+import dev.bbkb.ime.keyboard.KeyboardColorManager
 import dev.bbkb.ime.R
 import dev.bbkb.ime.core.locale.SubtypeManager
 import dev.bbkb.ime.core.settings.ui.LocalSettingsColors
 import dev.bbkb.ime.core.settings.ui.SettingsScaffold
 import dev.bbkb.ime.core.shared.Logger
 import dev.bbkb.ime.keyboard.KeyboardBuilder
-import dev.bbkb.ime.keyboard.KeyboardColorManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -103,9 +110,50 @@ internal fun KeyLayoutEditorScreen(spec: KeyEditorSpec, onBack: () -> Unit) {
     val snackbars = remember { SnackbarHostState() }
     UndoSnackbar(viewModel, snackbars)
 
+    // Physical-key assignment (PKB symbol page only): while a palette symbol is pending, a hardware
+    // key press assigns it to that key's custom-symbol slot. The capture runs through
+    // HardwareKeyCaptureBus, the same path DeviceProfileBuilderScreen uses, so a board key (Sym,
+    // Emoji, Mic) reaches the editor even when the accessibility service would otherwise consume it.
+    val captureModifier = if (spec.capturesPhysicalKeys) {
+        val focusRequester = remember { FocusRequester() }
+        DisposableEffect(Unit) {
+            val listener = HardwareKeyCaptureBus.Listener { scanCode, _, _, _, down, _ ->
+                val index = PkbSymbolKeyCapture.mapScanToIndex(scanCode)
+                if (index < 0 || viewModel.selectedSymbol == null) {
+                    false
+                } else {
+                    // Assign on ACTION_UP; the DOWN and any repeats for a mapped key are consumed
+                    // while a symbol is pending so the key neither types nor triggers a board action.
+                    if (!down) viewModel.assignPendingSymbolToKey(index)
+                    true
+                }
+            }
+            HardwareKeyCaptureBus.register(listener)
+            onDispose { HardwareKeyCaptureBus.unregister(listener) }
+        }
+        LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+        Modifier
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                native.deviceId >= 0 && HardwareKeyCaptureBus.offer(
+                    native.scanCode,
+                    native.keyCode,
+                    native.deviceId,
+                    native.repeatCount,
+                    native.action == AndroidKeyEvent.ACTION_DOWN,
+                    native.eventTime,
+                )
+            }
+    } else {
+        Modifier
+    }
+
     SettingsScaffold(
         title = stringResource(spec.title),
         onNavigateBack = onBack,
+        modifier = captureModifier,
         actions = { EditorTopBarActions(spec, viewModel) },
         snackbarHost = { SnackbarHost(snackbars) },
     ) { padding ->

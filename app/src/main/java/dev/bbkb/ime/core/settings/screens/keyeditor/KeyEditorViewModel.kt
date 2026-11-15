@@ -109,6 +109,19 @@ internal class KeyEditorViewModel(
         }
     }
 
+    /**
+     * Physical-key assignment for the PKB symbol page: when a palette symbol is pending, a hardware
+     * key resolved to [index] assigns it to that key's position, the same transition [onKeyTapped]
+     * runs for a tapped key. Returns true when a symbol was pending and [index] was in range, so the
+     * caller can consume the event; false otherwise, leaving ordinary key handling untouched.
+     */
+    fun assignPendingSymbolToKey(index: Int): Boolean {
+        val pending = selectedSymbol ?: return false
+        if (index !in layout.indices) return false
+        assign(pending, index)
+        return true
+    }
+
     private fun assign(symbol: String, keyIndex: Int) {
         if (keyIndex !in layout.indices) return
         forgetUndo()
